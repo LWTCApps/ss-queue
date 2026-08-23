@@ -1,13 +1,11 @@
-<!-- ============================================================
-     Student Services Queue — branded for Collier County Public
-     Schools Workforce Education (LWTC / iTECH)
-     Paste everything below into a Power Pages "HTML" / "Code"
-     content block on its own page. No build step required —
-     React is loaded from a CDN and JSX is compiled in-browser.
-     Set FLOW_URL below once your Power Automate flow exists
-     (see SETUP.md).
-     ============================================================ -->
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Student Services Queue</title>
+</head>
+<body>
 <div id="ssq-root"></div>
 
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -37,8 +35,6 @@ const THEME = {
   footer: "#132430",
   footerText: "#C7D3D9",
 };
-
-// ---------- Inline icons ----------
 
 function svgProps({ size = 16, color = "currentColor" } = {}) {
   return { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" };
@@ -71,15 +67,15 @@ const SERVICES = [
   { code: "G", label: "General Questions", Icon: IconHelp },
 ];
 
-const STAFF_PIN = "3702";
 const AVG_MINUTES = 7;
 
 // -----------------------------------------------------------------------
 // CONFIGURE THIS: paste the HTTP POST URL of your Power Automate flow's
 // "When an HTTP request is received" trigger here. See SETUP.md.
 // Leave blank to run in preview mode (data stays in this browser tab).
+// Must match the same value used in the other page's file.
 // -----------------------------------------------------------------------
-const FLOW_URL = "https://default59943c4a62534d0d8a98fef50303d3.4b.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/28/workflows/ae2e1c6f5c404d21866c01942ecc5ff4/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=kiuUl5n4bjR6WXDFeFZeKzE0h0O4CXO5EcrC4ldLVfY";
+const FLOW_URL = "";
 
 function serviceInfo(code) {
   return SERVICES.find((s) => s.code === code) || SERVICES[SERVICES.length - 1];
@@ -87,8 +83,6 @@ function serviceInfo(code) {
 function elapsedMin(iso) {
   return Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
 }
-
-// ---------- Backend: Power Automate flow, with an in-memory preview fallback ----------
 
 let previewStore = { tickets: [] };
 
@@ -140,8 +134,6 @@ async function backend(action, payload) {
     return { data: previewCall(action, payload), connected: false };
   }
 }
-
-// ---------- Small building blocks ----------
 
 function GlobalStyle() {
   return (
@@ -197,7 +189,7 @@ function ConnectionBanner({ connected }) {
   );
 }
 
-function PageHeader({ onHome }) {
+function PageHeader({ onHome, right }) {
   return (
     <div>
       <div style={{ background: THEME.panel, borderBottom: `1px solid ${THEME.border}` }}>
@@ -205,9 +197,7 @@ function PageHeader({ onHome }) {
           <button onClick={onHome} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center" }}>
             <img src={LOGO_CCPS} alt="Collier County Public Schools — Workforce Education" style={{ height: 34 }} />
           </button>
-          <span style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: 13, color: THEME.slate, letterSpacing: 0.3 }}>
-            Student Services Queue
-          </span>
+          {right}
         </div>
       </div>
       <div className="ssq-heat-bar" />
@@ -258,7 +248,7 @@ function NowServingBoard({ tickets }) {
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {t.status === "serving" ? <PulseDot color={THEME.green} /> : <PulseDot color={THEME.orange} />}
                 <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, fontWeight: 600, color: t.status === "serving" ? THEME.greenDark : THEME.orange, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  {t.status === "serving" ? `Window ${t.window}` : `Called, Window ${t.window}`}
+                  {t.status === "serving" ? `With ${t.window}` : `Called by ${t.window}`}
                 </span>
               </div>
             </div>
@@ -275,7 +265,9 @@ function Landing({ onPick }) {
   return (
     <div style={{ minHeight: "100vh", background: THEME.bg, display: "flex", flexDirection: "column" }}>
       <GlobalStyle />
-      <PageHeader onHome={() => {}} />
+      <PageHeader onHome={() => {}} right={
+        <span style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: 13, color: THEME.slate, letterSpacing: 0.3 }}>Student Services Queue</span>
+      } />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
           <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: 2.5, color: THEME.primaryDark, textTransform: "uppercase", marginBottom: 10 }}>
@@ -283,7 +275,7 @@ function Landing({ onPick }) {
           </div>
           <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 32, fontWeight: 800, color: THEME.ink }}>Take a Number</div>
           <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 14, color: THEME.slate, marginTop: 8 }}>
-            Check in for service, or open the staff console.
+            Check in for service below.
           </div>
         </div>
         <div style={{ display: "flex", gap: 18, flexWrap: "wrap", justifyContent: "center" }}>
@@ -308,7 +300,7 @@ function Landing({ onPick }) {
         </div>
         {!FLOW_URL && (
           <div style={{ marginTop: 32, fontFamily: "'Inter', sans-serif", fontSize: 11.5, color: THEME.slateDim, maxWidth: 360, textAlign: "center", lineHeight: 1.6 }}>
-            No Microsoft List connected yet — running in preview mode. Set FLOW_URL in this file once your Power Automate flow is ready.
+            No Microsoft List connected yet — running in preview mode. Set FLOW_URL in ssq-shared.txt once your Power Automate flow is ready.
           </div>
         )}
       </div>
@@ -366,7 +358,9 @@ function StudentView({ onBack }) {
   return (
     <div style={{ minHeight: "100vh", background: THEME.bg, display: "flex", flexDirection: "column" }}>
       <GlobalStyle />
-      <PageHeader onHome={onBack} />
+      <PageHeader onHome={onBack} right={
+        <span style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: 13, color: THEME.slate, letterSpacing: 0.3 }}>Student Services Queue</span>
+      } />
       <div style={{ flex: 1, padding: "24px 16px 20px" }}>
         <div style={{ maxWidth: 480, margin: "0 auto" }}>
           <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: THEME.slate, fontFamily: "'Inter', sans-serif", fontSize: 13, cursor: "pointer", marginBottom: 18, padding: 0 }}>
@@ -421,12 +415,12 @@ function StudentView({ onBack }) {
               {myTicket.status === "called" && (
                 <div style={{ marginTop: 18, background: "#FDF1E7", border: `1px solid ${THEME.orange}`, borderRadius: 8, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                   <IconBell size={15} color={THEME.orange} />
-                  <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: "#9A4A10", fontWeight: 600 }}>You're being called — head to Window {myTicket.window}</span>
+                  <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: "#9A4A10", fontWeight: 600 }}>You're being called by {myTicket.window} — head to the front desk</span>
                 </div>
               )}
               {myTicket.status === "serving" && (
                 <div style={{ marginTop: 18, background: "#EFF7E3", border: `1px solid ${THEME.green}`, borderRadius: 8, padding: "12px 14px" }}>
-                  <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: THEME.greenDark, fontWeight: 600 }}>Currently being helped at Window {myTicket.window}</span>
+                  <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: THEME.greenDark, fontWeight: 600 }}>Currently being helped by {myTicket.window}</span>
                 </div>
               )}
               {myTicket.status === "completed" && (
@@ -447,7 +441,9 @@ function StudentView({ onBack }) {
   );
 }
 
-// ---------- Staff View ----------
+// ---------- Staff View (PIN-gated) ----------
+
+const STAFF_PIN = "4477"; // change this to whatever you'd like
 
 function StaffLogin({ onSuccess, onBack }) {
   const [pin, setPin] = useState("");
@@ -455,7 +451,9 @@ function StaffLogin({ onSuccess, onBack }) {
   return (
     <div style={{ minHeight: "100vh", background: THEME.bg, display: "flex", flexDirection: "column" }}>
       <GlobalStyle />
-      <PageHeader onHome={onBack} />
+      <PageHeader onHome={onBack} right={
+        <span style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: 13, color: THEME.slate, letterSpacing: 0.3 }}>Staff Console</span>
+      } />
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <Panel style={{ padding: 28, width: 300 }}>
           <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: THEME.slate, fontFamily: "'Inter', sans-serif", fontSize: 13, cursor: "pointer", marginBottom: 18, padding: 0 }}>
@@ -479,10 +477,10 @@ function StaffLogin({ onSuccess, onBack }) {
   );
 }
 
-function StaffConsole({ onBack }) {
+function StaffConsole({ onExit }) {
   const [tickets, setTickets] = useState([]);
   const [connected, setConnected] = useState(true);
-  const [windowNum, setWindowNum] = useState("1");
+  const [windowNum, setWindowNum] = useState("");
   const [walkName, setWalkName] = useState("");
   const [walkService, setWalkService] = useState(SERVICES[0].code);
 
@@ -502,7 +500,7 @@ function StaffConsole({ onBack }) {
   const inProgress = tickets.filter((t) => t.status === "called" || t.status === "serving").sort((a, b) => new Date(a.calledTime) - new Date(b.calledTime));
 
   const callNext = async () => {
-    if (waiting.length === 0) return;
+    if (waiting.length === 0 || !windowNum.trim()) return;
     const next = waiting[0];
     const { data, connected } = await backend("setStatus", { id: next.id, status: "called", window: windowNum });
     setTickets(data.tickets || []);
@@ -527,7 +525,7 @@ function StaffConsole({ onBack }) {
     setConnected(connected);
   };
   const exportCsv = () => {
-    const rows = [["Number", "Name", "Student ID", "Service", "Status", "Checked In", "Called", "Window"]];
+    const rows = [["Number", "Name", "Student ID", "Service", "Status", "Checked In", "Called", "Representative"]];
     tickets.forEach((t) => { rows.push([t.number, t.name, t.studentId, serviceInfo(t.service).label, t.status, t.checkinTime, t.calledTime || "", t.window || ""]); });
     const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -542,13 +540,15 @@ function StaffConsole({ onBack }) {
   return (
     <div style={{ minHeight: "100vh", background: THEME.bg, display: "flex", flexDirection: "column" }}>
       <GlobalStyle />
-      <PageHeader onHome={onBack} />
+      <PageHeader onHome={onExit} right={
+        <button onClick={onExit} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: THEME.slate, fontFamily: "'Inter', sans-serif", fontSize: 12.5, cursor: "pointer", padding: 0 }}>
+          <IconLogOut size={14} /> Exit console
+        </button>
+      } />
       <div style={{ flex: 1, padding: "22px 16px 20px" }}>
         <div style={{ maxWidth: 900, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-            <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: THEME.slate, fontFamily: "'Inter', sans-serif", fontSize: 13, cursor: "pointer", padding: 0 }}>
-              <IconLogOut size={15} /> Exit console
-            </button>
+            <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: 2, color: THEME.primaryDark, textTransform: "uppercase" }}>Staff Console</div>
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={refresh} style={{ display: "flex", alignItems: "center", gap: 6, background: THEME.panel, border: `1px solid ${THEME.border}`, color: THEME.slate, borderRadius: 8, padding: "7px 12px", fontFamily: "'Inter', sans-serif", fontSize: 12, cursor: "pointer" }}>
                 <IconRefresh size={13} /> Refresh
@@ -558,15 +558,14 @@ function StaffConsole({ onBack }) {
               </button>
             </div>
           </div>
-          <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: 2, color: THEME.primaryDark, textTransform: "uppercase", marginBottom: 12 }}>Staff Console</div>
           <ConnectionBanner connected={connected} />
           <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 320px) 1fr", gap: 18 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <NowServingBoard tickets={tickets} />
               <Panel style={{ padding: 18 }}>
                 <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 700, color: THEME.ink, marginBottom: 12 }}>Call next student</div>
-                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slate, marginBottom: 6 }}>Your window</div>
-                <input value={windowNum} onChange={(e) => setWindowNum(e.target.value)}
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slate, marginBottom: 6 }}>Your name</div>
+                <input value={windowNum} onChange={(e) => setWindowNum(e.target.value)} placeholder="e.g. Jane Smith"
                   style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 14 }} />
                 <button onClick={callNext} className="ssq-btn-primary" style={{ width: "100%", background: THEME.primary, color: "#fff", border: "none", borderRadius: 999, padding: "10px 0", fontFamily: "'Poppins', sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                   Call next ({waiting.length} waiting)
@@ -602,7 +601,7 @@ function StaffConsole({ onBack }) {
                         <div>
                           <Mono size={15}>{t.number}</Mono>
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginLeft: 10 }}>{t.name}</span>
-                          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, marginLeft: 8 }}>Window {t.window}</span>
+                          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, marginLeft: 8 }}>{t.window}</span>
                         </div>
                         <div style={{ display: "flex", gap: 6 }}>
                           {t.status === "called" && (
@@ -663,14 +662,18 @@ function StaffConsole({ onBack }) {
 function App() {
   const [view, setView] = useState("landing");
   const [staffAuthed, setStaffAuthed] = useState(false);
+
   if (view === "landing") return <Landing onPick={setView} />;
   if (view === "student") return <StudentView onBack={() => setView("landing")} />;
   if (view === "staff") {
     if (!staffAuthed) return <StaffLogin onSuccess={() => setStaffAuthed(true)} onBack={() => setView("landing")} />;
-    return <StaffConsole onBack={() => { setStaffAuthed(false); setView("landing"); }} />;
+    return <StaffConsole onExit={() => { setStaffAuthed(false); setView("landing"); }} />;
   }
   return null;
 }
 
 ReactDOM.createRoot(document.getElementById("ssq-root")).render(<App />);
+
 </script>
+</body>
+</html>
