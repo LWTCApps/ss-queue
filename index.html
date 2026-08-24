@@ -61,12 +61,21 @@ const IconSkipFwd = (p) => <svg {...svgProps(p)}><path d="M5 4l10 8-10 8z" /><pa
 const IconWifiOff = (p) => <svg {...svgProps(p)}><path d="M3 3l18 18" /><path d="M8.5 16.5a5 5 0 0 1 7 0" /><path d="M5 13a10 10 0 0 1 3-2.2" /><path d="M16 10.8A10 10 0 0 1 19 13" /><path d="M2 8a15 15 0 0 1 4.2-2.9" /><path d="M17.8 5.1A15 15 0 0 1 22 8" /><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none" /></svg>;
 
 const SERVICES = [
-  { code: "R", label: "Registration & Records", Icon: IconFileText },
-  { code: "F", label: "Financial Aid", Icon: IconWallet },
-  { code: "A", label: "Academic Advising", Icon: IconGradCap },
-  { code: "I", label: "ID Cards & Parking", Icon: IconIdCard },
-  { code: "G", label: "General Questions", Icon: IconHelp },
+  { code: "R", label: "Registration & Records", Icon: IconFileText, queue: "student-services" },
+  { code: "F", label: "Financial Aid", Icon: IconWallet, queue: "financial-aid" },
+  { code: "A", label: "Academic Advising", Icon: IconGradCap, queue: "student-services" },
+  { code: "I", label: "ID Cards & Parking", Icon: IconIdCard, queue: "student-services" },
+  { code: "G", label: "General Questions", Icon: IconHelp, queue: "student-services" },
 ];
+
+const QUEUES = [
+  { id: "financial-aid", label: "Financial Aid" },
+  { id: "student-services", label: "Student Services" },
+];
+
+function queueInfo(id) {
+  return QUEUES.find((q) => q.id === id) || QUEUES[1];
+}
 
 const AVG_MINUTES = 7;
 
@@ -387,8 +396,25 @@ function StudentView({ onBack }) {
               <input value={studentId} onChange={(e) => setStudentId(e.target.value)} placeholder="S00123456"
                 style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }} />
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 8 }}>What do you need help with?</div>
+
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, fontWeight: 700, color: THEME.orange, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Financial Aid</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8, marginBottom: 16 }}>
+                {SERVICES.filter((s) => s.queue === "financial-aid").map((s) => (
+                  <button key={s.code} onClick={() => setService(s.code)} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "10px 10px", borderRadius: 8, cursor: "pointer",
+                    background: service === s.code ? "#E6F7FD" : THEME.bg,
+                    border: `1px solid ${service === s.code ? THEME.primary : THEME.border}`,
+                    color: service === s.code ? THEME.primaryDark : THEME.ink, textAlign: "left"
+                  }}>
+                    <s.Icon size={15} />
+                    <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12.5 }}>{s.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, fontWeight: 700, color: THEME.primaryDark, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Student Services</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 18 }}>
-                {SERVICES.map((s) => (
+                {SERVICES.filter((s) => s.queue === "student-services").map((s) => (
                   <button key={s.code} onClick={() => setService(s.code)} style={{
                     display: "flex", alignItems: "center", gap: 8, padding: "10px 10px", borderRadius: 8, cursor: "pointer",
                     background: service === s.code ? "#E6F7FD" : THEME.bg,
@@ -493,6 +519,7 @@ function StaffConsole({ onExit }) {
   const [windowNum, setWindowNum] = useState("");
   const [walkName, setWalkName] = useState("");
   const [walkService, setWalkService] = useState(SERVICES[0].code);
+  const [queueFilter, setQueueFilter] = useState("all");
 
   const refresh = useCallback(async () => {
     const { data, connected } = await backend("getState");
@@ -506,15 +533,21 @@ function StaffConsole({ onExit }) {
     return () => clearInterval(iv);
   }, [refresh]);
 
-  const waiting = tickets.filter((t) => t.status === "waiting").sort((a, b) => new Date(a.checkinTime) - new Date(b.checkinTime));
-  const inProgress = tickets.filter((t) => t.status === "called" || t.status === "serving").sort((a, b) => new Date(a.calledTime) - new Date(b.calledTime));
+  const inQueue = (t) => queueFilter === "all" || serviceInfo(t.service).queue === queueFilter;
+  const queueFilteredTickets = tickets.filter(inQueue);
 
-  const callNext = async () => {
-    if (waiting.length === 0 || !windowNum.trim()) return;
-    const next = waiting[0];
-    const { data, connected } = await backend("setStatus", { id: next.id, status: "called", window: windowNum });
+  const waiting = tickets.filter((t) => t.status === "waiting" && inQueue(t)).sort((a, b) => new Date(a.checkinTime) - new Date(b.checkinTime));
+  const inProgress = tickets.filter((t) => (t.status === "called" || t.status === "serving") && inQueue(t)).sort((a, b) => new Date(a.calledTime) - new Date(b.calledTime));
+
+  const callStudent = async (id) => {
+    if (!windowNum.trim()) return;
+    const { data, connected } = await backend("setStatus", { id, status: "called", window: windowNum });
     setTickets(data.tickets || []);
     setConnected(connected);
+  };
+  const callNext = async () => {
+    if (waiting.length === 0 || !windowNum.trim()) return;
+    callStudent(waiting[0].id);
   };
   const setStatus = async (id, status) => {
     const { data, connected } = await backend("setStatus", { id, status });
@@ -569,11 +602,26 @@ function StaffConsole({ onExit }) {
             </div>
           </div>
           <ConnectionBanner connected={connected} />
+          <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+            {[{ id: "all", label: "All Queues" }, ...QUEUES].map((q) => (
+              <button key={q.id} onClick={() => setQueueFilter(q.id)} style={{
+                padding: "8px 16px", borderRadius: 999, cursor: "pointer",
+                background: queueFilter === q.id ? THEME.primary : THEME.panel,
+                border: `1px solid ${queueFilter === q.id ? THEME.primary : THEME.border}`,
+                color: queueFilter === q.id ? "#fff" : THEME.ink,
+                fontFamily: "'Inter', sans-serif", fontSize: 12.5, fontWeight: 600
+              }}>
+                {q.label}
+              </button>
+            ))}
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 320px) 1fr", gap: 18 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <NowServingBoard tickets={tickets} />
+              <NowServingBoard tickets={queueFilteredTickets} />
               <Panel style={{ padding: 18 }}>
-                <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 700, color: THEME.ink, marginBottom: 12 }}>Call next student</div>
+                <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 700, color: THEME.ink, marginBottom: 12 }}>
+                  Call next student {queueFilter !== "all" && <span style={{ color: THEME.slate, fontWeight: 500 }}>· {queueInfo(queueFilter).label}</span>}
+                </div>
                 <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slate, marginBottom: 6 }}>Your name</div>
                 <input value={windowNum} onChange={(e) => setWindowNum(e.target.value)} placeholder="e.g. Jane Smith"
                   style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 14 }} />
@@ -649,6 +697,13 @@ function StaffConsole({ onExit }) {
                           <span style={{ display: "flex", alignItems: "center", gap: 4, fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>
                             <IconClock size={11} /> {elapsedMin(t.checkinTime)}m
                           </span>
+                          <button onClick={() => callStudent(t.id)} disabled={!windowNum.trim()} title={windowNum.trim() ? "Call this student" : "Enter your name first"} style={{
+                            background: windowNum.trim() ? THEME.primary : THEME.border, border: "none", color: "#fff", borderRadius: 6,
+                            padding: "5px 10px", cursor: windowNum.trim() ? "pointer" : "not-allowed",
+                            fontFamily: "'Inter', sans-serif", fontSize: 11.5, fontWeight: 600
+                          }}>
+                            Call
+                          </button>
                           <button onClick={() => setStatus(t.id, "cancelled")} title="Remove" style={{ background: "none", border: `1px solid ${THEME.border}`, color: THEME.slate, borderRadius: 6, padding: "5px 7px", cursor: "pointer" }}>
                             <IconSkipFwd size={13} />
                           </button>
@@ -764,8 +819,13 @@ function QueueDisplay({ onExit }) {
                   </span>
                   <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slateDim }}>{serviceInfo(t.service).label}</span>
                 </div>
-                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 800, fontSize: 56, color: THEME.primaryDark, lineHeight: 1 }}>
-                  {t.number}
+                <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 800, fontSize: 56, color: THEME.primaryDark, lineHeight: 1 }}>
+                    {t.number}
+                  </div>
+                  <div style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 700, fontSize: 26, color: THEME.ink }}>
+                    {(t.name || "").trim().split(" ")[0]}
+                  </div>
                 </div>
                 <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 20, fontWeight: 600, color: THEME.ink, marginTop: 10 }}>
                   {t.window || "—"}
