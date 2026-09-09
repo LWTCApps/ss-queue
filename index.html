@@ -11,7 +11,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js" crossorigin></script>
-<script src="Data/queue-data.js"></script>
+<script src="data/queue-data.js"></script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useCallback } = React;
@@ -424,9 +424,6 @@ function StudentView({ onBack }) {
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Full name</div>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jordan Alvarez"
                 style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }} />
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Student ID (optional)</div>
-              <input value={studentId} onChange={(e) => setStudentId(e.target.value)} placeholder="S00123456"
-                style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }} />
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Are you a new or returning student?</div>
               <select value={studentType || ""} onChange={(e) => setStudentType(e.target.value || null)}
                 style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }}>
@@ -448,6 +445,9 @@ function StudentView({ onBack }) {
 
               {studentType === "Returning" && (
                 <React.Fragment>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Student ID (optional)</div>
+                  <input value={studentId} onChange={(e) => setStudentId(e.target.value)} placeholder="S00123456"
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }} />
                   <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Which program are you enrolled in / accepted into?</div>
                   <select value={programEnrolled} onChange={(e) => setProgramEnrolled(e.target.value)}
                     style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }}>
@@ -593,7 +593,9 @@ function StaffLogin({ onSuccess, onBack }) {
 function StaffConsole({ onExit }) {
   const [tickets, setTickets] = useState([]);
   const [connected, setConnected] = useState(true);
-  const [windowNum, setWindowNum] = useState("");
+  const [windowChoice, setWindowChoice] = useState("");
+  const [windowOther, setWindowOther] = useState("");
+  const windowNum = windowChoice === ADVISOR_OTHER_VALUE ? windowOther.trim() : windowChoice;
   const [walkName, setWalkName] = useState("");
   const [walkService, setWalkService] = useState(SERVICES[0].code);
   const [walkStudentType, setWalkStudentType] = useState("New");
@@ -711,8 +713,16 @@ function StaffConsole({ onExit }) {
                   Call next student {queueFilter !== "all" && <span style={{ color: THEME.slate, fontWeight: 500 }}>· {queueInfo(queueFilter).label}</span>}
                 </div>
                 <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slate, marginBottom: 6 }}>Your name</div>
-                <input value={windowNum} onChange={(e) => setWindowNum(e.target.value)} placeholder="e.g. Jane Smith"
-                  style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 14 }} />
+                <select value={windowChoice} onChange={(e) => setWindowChoice(e.target.value)}
+                  style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: windowChoice === ADVISOR_OTHER_VALUE ? 8 : 14 }}>
+                  <option value="" disabled>Select your name…</option>
+                  {ADVISORS.map((a) => <option key={a} value={a}>{a}</option>)}
+                  <option value={ADVISOR_OTHER_VALUE}>Other — type name</option>
+                </select>
+                {windowChoice === ADVISOR_OTHER_VALUE && (
+                  <input value={windowOther} onChange={(e) => setWindowOther(e.target.value)} placeholder="Your name"
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 14 }} />
+                )}
                 <button onClick={callNext} className="ssq-btn-primary" style={{ width: "100%", background: THEME.primary, color: "#fff", border: "none", borderRadius: 999, padding: "10px 0", fontFamily: "'Poppins', sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                   Call next ({waiting.length} waiting)
                 </button>
@@ -819,6 +829,9 @@ function StaffConsole({ onExit }) {
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>{serviceInfo(t.service).label}</span>
                           {(t.programInquiry || t.programEnrolled) && (
                             <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>· {t.programInquiry || t.programEnrolled}</span>
+                          )}
+                          {t.workforceAdvisor && (
+                            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>· Advisor: {t.workforceAdvisor}</span>
                           )}
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
