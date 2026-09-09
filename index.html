@@ -11,6 +11,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js" crossorigin></script>
+<script src="data/queue-data.js"></script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useCallback } = React;
@@ -60,13 +61,13 @@ const IconPlusCircle = (p) => <svg {...svgProps(p)}><circle cx="12" cy="12" r="9
 const IconSkipFwd = (p) => <svg {...svgProps(p)}><path d="M5 4l10 8-10 8z" /><path d="M19 5v14" /></svg>;
 const IconWifiOff = (p) => <svg {...svgProps(p)}><path d="M3 3l18 18" /><path d="M8.5 16.5a5 5 0 0 1 7 0" /><path d="M5 13a10 10 0 0 1 3-2.2" /><path d="M16 10.8A10 10 0 0 1 19 13" /><path d="M2 8a15 15 0 0 1 4.2-2.9" /><path d="M17.8 5.1A15 15 0 0 1 22 8" /><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none" /></svg>;
 
-const SERVICES = [
-  { code: "R", label: "Registration & Records", Icon: IconFileText, queue: "student-services" },
-  { code: "F", label: "Financial Aid", Icon: IconWallet, queue: "financial-aid" },
-  { code: "A", label: "Academic Advising", Icon: IconGradCap, queue: "student-services" },
-  { code: "I", label: "ID Cards & Parking", Icon: IconIdCard, queue: "student-services" },
-  { code: "G", label: "General Questions", Icon: IconHelp, queue: "student-services" },
-];
+// SERVICE_DEFS, PROGRAM_DEFS, ADVISOR_DEFS, and ADVISOR_OTHER_VALUE come
+// from data/queue-data.js (loaded above). Icons can't live in that plain
+// JS file since they're JSX, so we attach them here via a name lookup.
+const ICONS = { FileText: IconFileText, Wallet: IconWallet, GradCap: IconGradCap, IdCard: IconIdCard, Help: IconHelp };
+const SERVICES = SERVICE_DEFS.map((s) => ({ ...s, Icon: ICONS[s.icon] }));
+const PROGRAMS = PROGRAM_DEFS;
+const ADVISORS = ADVISOR_DEFS;
 
 const QUEUES = [
   { id: "financial-aid", label: "Financial Aid" },
@@ -104,6 +105,10 @@ function previewCall(action, payload) {
     const ticket = {
       id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       number, service: payload.service, name: payload.name, studentId: payload.studentId || "",
+      studentType: payload.studentType || "",
+      programInquiry: payload.programInquiry || "",
+      programEnrolled: payload.programEnrolled || "",
+      workforceAdvisor: payload.workforceAdvisor || "",
       status: "waiting", window: null, checkinTime: new Date().toISOString(), calledTime: null,
     };
     previewStore = { tickets: [...previewStore.tickets, ticket] };
@@ -183,6 +188,20 @@ function Mono({ children, size = 14, color = THEME.ink, weight = 700 }) {
 }
 function PulseDot({ color = THEME.green }) {
   return <span style={{ width: 7, height: 7, borderRadius: 99, background: color, display: "inline-block", animation: "pulseDot 1.6s ease-in-out infinite" }} />;
+}
+function StudentTypeBadge({ type }) {
+  const isNew = type === "New";
+  return (
+    <span style={{
+      fontFamily: "'Inter', sans-serif", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4,
+      color: isNew ? THEME.greenDark : THEME.primaryDark,
+      background: isNew ? "#EFF7E3" : "#E6F7FD",
+      border: `1px solid ${isNew ? THEME.green : THEME.primary}`,
+      borderRadius: 999, padding: "2px 7px", marginLeft: 8
+    }}>
+      {type}
+    </span>
+  );
 }
 function Panel({ children, style }) {
   return <div style={{ background: THEME.panel, border: `1px solid ${THEME.border}`, borderRadius: 12, boxShadow: "0 1px 3px rgba(20,40,50,0.06)", ...style }}>{children}</div>;
@@ -335,6 +354,11 @@ function StudentView({ onBack }) {
   const [connected, setConnected] = useState(true);
   const [name, setName] = useState("");
   const [studentId, setStudentId] = useState("");
+  const [studentType, setStudentType] = useState(null);
+  const [programInquiry, setProgramInquiry] = useState("");
+  const [programEnrolled, setProgramEnrolled] = useState("");
+  const [advisorChoice, setAdvisorChoice] = useState("");
+  const [advisorOther, setAdvisorOther] = useState("");
   const [service, setService] = useState(SERVICES[0].code);
   const [myTicketId, setMyTicketId] = useState(null);
   const [error, setError] = useState("");
@@ -355,8 +379,15 @@ function StudentView({ onBack }) {
 
   const checkIn = async () => {
     if (!name.trim()) { setError("Please enter your name."); return; }
+    if (!studentType) { setError("Please let us know if you're a new or returning student."); return; }
     setError("");
-    const { data, connected } = await backend("checkin", { service, name: name.trim(), studentId: studentId.trim() });
+    const workforceAdvisor = advisorChoice === ADVISOR_OTHER_VALUE ? advisorOther.trim() : advisorChoice;
+    const { data, connected } = await backend("checkin", {
+      service, name: name.trim(), studentId: studentId.trim(), studentType,
+      programInquiry: studentType === "New" ? programInquiry : "",
+      programEnrolled: studentType === "Returning" ? programEnrolled : "",
+      workforceAdvisor,
+    });
     setTickets(data.tickets || []);
     setConnected(connected);
     setMyTicketId(data.createdId);
@@ -367,7 +398,8 @@ function StudentView({ onBack }) {
     setTickets(data.tickets || []);
     setConnected(connected);
     setMyTicketId(null);
-    setName(""); setStudentId("");
+    setName(""); setStudentId(""); setStudentType(null);
+    setProgramInquiry(""); setProgramEnrolled(""); setAdvisorChoice(""); setAdvisorOther("");
   };
 
   const position = myTicket && myTicket.status === "waiting"
@@ -395,6 +427,48 @@ function StudentView({ onBack }) {
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Student ID (optional)</div>
               <input value={studentId} onChange={(e) => setStudentId(e.target.value)} placeholder="S00123456"
                 style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }} />
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Are you a new or returning student?</div>
+              <select value={studentType || ""} onChange={(e) => setStudentType(e.target.value || null)}
+                style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }}>
+                <option value="" disabled>Select one…</option>
+                <option value="New">New Student</option>
+                <option value="Returning">Returning Student</option>
+              </select>
+
+              {studentType === "New" && (
+                <React.Fragment>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Which program are you interested in?</div>
+                  <select value={programInquiry} onChange={(e) => setProgramInquiry(e.target.value)}
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }}>
+                    <option value="">Not sure yet</option>
+                    {PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </React.Fragment>
+              )}
+
+              {studentType === "Returning" && (
+                <React.Fragment>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Which program are you enrolled in / accepted into?</div>
+                  <select value={programEnrolled} onChange={(e) => setProgramEnrolled(e.target.value)}
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }}>
+                    <option value="">Select a program…</option>
+                    {PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </React.Fragment>
+              )}
+
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Workforce Advisor (if you have one)</div>
+              <select value={advisorChoice} onChange={(e) => setAdvisorChoice(e.target.value)}
+                style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: advisorChoice === ADVISOR_OTHER_VALUE ? 10 : 16 }}>
+                <option value="">I don't know / not applicable</option>
+                {ADVISORS.map((a) => <option key={a} value={a}>{a}</option>)}
+                <option value={ADVISOR_OTHER_VALUE}>Other — type name</option>
+              </select>
+              {advisorChoice === ADVISOR_OTHER_VALUE && (
+                <input value={advisorOther} onChange={(e) => setAdvisorOther(e.target.value)} placeholder="Advisor's name"
+                  style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 16 }} />
+              )}
+
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 8 }}>What do you need help with?</div>
 
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, fontWeight: 700, color: THEME.orange, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Financial Aid</div>
@@ -435,7 +509,10 @@ function StudentView({ onBack }) {
             <Panel style={{ padding: 26, textAlign: "center" }}>
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 10, textTransform: "uppercase", letterSpacing: 1 }}>Your number</div>
               <FlapNumber value={myTicket.number} size={52} />
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: THEME.ink, marginTop: 12 }}>{serviceInfo(myTicket.service).label}</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: THEME.ink, marginTop: 12 }}>
+                {serviceInfo(myTicket.service).label}
+                {myTicket.studentType && <span style={{ color: THEME.slateDim }}> · {myTicket.studentType} Student</span>}
+              </div>
               {myTicket.status === "waiting" && (
                 <div style={{ marginTop: 22, borderTop: `1px solid ${THEME.border}`, paddingTop: 18, display: "flex", justifyContent: "space-around" }}>
                   <div>
@@ -519,6 +596,11 @@ function StaffConsole({ onExit }) {
   const [windowNum, setWindowNum] = useState("");
   const [walkName, setWalkName] = useState("");
   const [walkService, setWalkService] = useState(SERVICES[0].code);
+  const [walkStudentType, setWalkStudentType] = useState("New");
+  const [walkProgramInquiry, setWalkProgramInquiry] = useState("");
+  const [walkProgramEnrolled, setWalkProgramEnrolled] = useState("");
+  const [walkAdvisorChoice, setWalkAdvisorChoice] = useState("");
+  const [walkAdvisorOther, setWalkAdvisorOther] = useState("");
   const [queueFilter, setQueueFilter] = useState("all");
 
   const refresh = useCallback(async () => {
@@ -556,10 +638,16 @@ function StaffConsole({ onExit }) {
   };
   const addWalkIn = async () => {
     if (!walkName.trim()) return;
-    const { data, connected } = await backend("checkin", { service: walkService, name: walkName.trim(), studentId: "" });
+    const workforceAdvisor = walkAdvisorChoice === ADVISOR_OTHER_VALUE ? walkAdvisorOther.trim() : walkAdvisorChoice;
+    const { data, connected } = await backend("checkin", {
+      service: walkService, name: walkName.trim(), studentId: "", studentType: walkStudentType,
+      programInquiry: walkStudentType === "New" ? walkProgramInquiry : "",
+      programEnrolled: walkStudentType === "Returning" ? walkProgramEnrolled : "",
+      workforceAdvisor,
+    });
     setTickets(data.tickets || []);
     setConnected(connected);
-    setWalkName("");
+    setWalkName(""); setWalkProgramInquiry(""); setWalkProgramEnrolled(""); setWalkAdvisorChoice(""); setWalkAdvisorOther("");
   };
   const resetDay = async () => {
     if (!window.confirm("Clear today's entire queue? This can't be undone.")) return;
@@ -568,8 +656,8 @@ function StaffConsole({ onExit }) {
     setConnected(connected);
   };
   const exportCsv = () => {
-    const rows = [["Number", "Name", "Student ID", "Service", "Status", "Checked In", "Called", "Representative"]];
-    tickets.forEach((t) => { rows.push([t.number, t.name, t.studentId, serviceInfo(t.service).label, t.status, t.checkinTime, t.calledTime || "", t.window || ""]); });
+    const rows = [["Number", "Name", "Student ID", "Student Type", "Service", "Program Inquiry", "Program Enrolled", "Workforce Advisor", "Status", "Checked In", "Called", "Representative"]];
+    tickets.forEach((t) => { rows.push([t.number, t.name, t.studentId, t.studentType || "", serviceInfo(t.service).label, t.programInquiry || "", t.programEnrolled || "", t.workforceAdvisor || "", t.status, t.checkinTime, t.calledTime || "", t.window || ""]); });
     const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -636,9 +724,38 @@ function StaffConsole({ onExit }) {
                 <input value={walkName} onChange={(e) => setWalkName(e.target.value)} placeholder="Student name"
                   style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }} />
                 <select value={walkService} onChange={(e) => setWalkService(e.target.value)}
-                  style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 12 }}>
+                  style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }}>
                   {SERVICES.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
                 </select>
+                <select value={walkStudentType} onChange={(e) => setWalkStudentType(e.target.value)}
+                  style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }}>
+                  <option value="New">New Student</option>
+                  <option value="Returning">Returning Student</option>
+                </select>
+                {walkStudentType === "New" && (
+                  <select value={walkProgramInquiry} onChange={(e) => setWalkProgramInquiry(e.target.value)}
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }}>
+                    <option value="">Program inquiry: not sure yet</option>
+                    {PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                )}
+                {walkStudentType === "Returning" && (
+                  <select value={walkProgramEnrolled} onChange={(e) => setWalkProgramEnrolled(e.target.value)}
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }}>
+                    <option value="">Program enrolled…</option>
+                    {PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                )}
+                <select value={walkAdvisorChoice} onChange={(e) => setWalkAdvisorChoice(e.target.value)}
+                  style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: walkAdvisorChoice === ADVISOR_OTHER_VALUE ? 8 : 12 }}>
+                  <option value="">Workforce advisor: n/a</option>
+                  {ADVISORS.map((a) => <option key={a} value={a}>{a}</option>)}
+                  <option value={ADVISOR_OTHER_VALUE}>Other — type name</option>
+                </select>
+                {walkAdvisorChoice === ADVISOR_OTHER_VALUE && (
+                  <input value={walkAdvisorOther} onChange={(e) => setWalkAdvisorOther(e.target.value)} placeholder="Advisor's name"
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 12 }} />
+                )}
                 <button onClick={addWalkIn} style={{ width: "100%", background: "none", color: THEME.ink, border: `1px solid ${THEME.border}`, borderRadius: 999, padding: "9px 0", fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: 12.5, cursor: "pointer" }}>
                   Add to queue
                 </button>
@@ -659,7 +776,14 @@ function StaffConsole({ onExit }) {
                         <div>
                           <Mono size={15}>{t.number}</Mono>
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginLeft: 10 }}>{t.name}</span>
+                          {t.studentType && <StudentTypeBadge type={t.studentType} />}
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, marginLeft: 8 }}>{t.window}</span>
+                          {(t.programInquiry || t.programEnrolled) && (
+                            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, marginLeft: 8 }}>· {t.programInquiry || t.programEnrolled}</span>
+                          )}
+                          {t.workforceAdvisor && (
+                            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, marginLeft: 8 }}>· Advisor: {t.workforceAdvisor}</span>
+                          )}
                         </div>
                         <div style={{ display: "flex", gap: 6 }}>
                           {t.status === "called" && (
@@ -691,7 +815,11 @@ function StaffConsole({ onExit }) {
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, width: 18 }}>{i + 1}</span>
                           <Mono size={15}>{t.number}</Mono>
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate }}>{t.name}</span>
+                          {t.studentType && <StudentTypeBadge type={t.studentType} />}
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>{serviceInfo(t.service).label}</span>
+                          {(t.programInquiry || t.programEnrolled) && (
+                            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>· {t.programInquiry || t.programEnrolled}</span>
+                          )}
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <span style={{ display: "flex", alignItems: "center", gap: 4, fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>
