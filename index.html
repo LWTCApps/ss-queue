@@ -72,6 +72,7 @@ const ADVISORS = ADVISOR_DEFS;
 const QUEUES = [
   { id: "financial-aid", label: "Financial Aid" },
   { id: "student-services", label: "Student Services" },
+  { id: "health-services", label: "Health Sciences" },
 ];
 
 function queueInfo(id) {
@@ -109,6 +110,7 @@ function previewCall(action, payload) {
       programInquiry: payload.programInquiry || "",
       programEnrolled: payload.programEnrolled || "",
       workforceAdvisor: payload.workforceAdvisor || "",
+      healthDocAction: payload.healthDocAction || "",
       status: "waiting", window: null, checkinTime: new Date().toISOString(), calledTime: null,
     };
     previewStore = { tickets: [...previewStore.tickets, ticket] };
@@ -359,6 +361,7 @@ function StudentView({ onBack }) {
   const [programEnrolled, setProgramEnrolled] = useState("");
   const [advisorChoice, setAdvisorChoice] = useState("");
   const [advisorOther, setAdvisorOther] = useState("");
+  const [healthDocAction, setHealthDocAction] = useState("");
   const [service, setService] = useState(SERVICES[0].code);
   const [myTicketId, setMyTicketId] = useState(null);
   const [error, setError] = useState("");
@@ -380,6 +383,7 @@ function StudentView({ onBack }) {
   const checkIn = async () => {
     if (!name.trim()) { setError("Please enter your name."); return; }
     if (!studentType) { setError("Please let us know if you're a new or returning student."); return; }
+    if (service === "H" && !healthDocAction) { setError("Please select Review or Submit for your Health Science document."); return; }
     setError("");
     const workforceAdvisor = advisorChoice === ADVISOR_OTHER_VALUE ? advisorOther.trim() : advisorChoice;
     const { data, connected } = await backend("checkin", {
@@ -387,6 +391,7 @@ function StudentView({ onBack }) {
       programInquiry: studentType === "New" ? programInquiry : "",
       programEnrolled: studentType === "Returning" ? programEnrolled : "",
       workforceAdvisor,
+      healthDocAction: service === "H" ? healthDocAction : "",
     });
     setTickets(data.tickets || []);
     setConnected(connected);
@@ -399,7 +404,7 @@ function StudentView({ onBack }) {
     setConnected(connected);
     setMyTicketId(null);
     setName(""); setStudentId(""); setStudentType(null);
-    setProgramInquiry(""); setProgramEnrolled(""); setAdvisorChoice(""); setAdvisorOther("");
+    setProgramInquiry(""); setProgramEnrolled(""); setAdvisorChoice(""); setAdvisorOther(""); setHealthDocAction("");
   };
 
   const position = myTicket && myTicket.status === "waiting"
@@ -500,6 +505,32 @@ function StudentView({ onBack }) {
                   </button>
                 ))}
               </div>
+
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, fontWeight: 700, color: THEME.greenDark, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Health Sciences</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8, marginBottom: 8 }}>
+                {SERVICES.filter((s) => s.queue === "health-services").map((s) => (
+                  <button key={s.code} onClick={() => setService(s.code)} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "10px 10px", borderRadius: 8, cursor: "pointer",
+                    background: service === s.code ? "#E6F7FD" : THEME.bg,
+                    border: `1px solid ${service === s.code ? THEME.primary : THEME.border}`,
+                    color: service === s.code ? THEME.primaryDark : THEME.ink, textAlign: "left"
+                  }}>
+                    <s.Icon size={15} />
+                    <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12.5 }}>{s.label}</span>
+                  </button>
+                ))}
+              </div>
+              {service === "H" && (
+                <React.Fragment>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Are you reviewing or submitting a document?</div>
+                  <select value={healthDocAction} onChange={(e) => setHealthDocAction(e.target.value)}
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 18 }}>
+                    <option value="" disabled>Select one…</option>
+                    <option value="Review">Review</option>
+                    <option value="Submit">Submit</option>
+                  </select>
+                </React.Fragment>
+              )}
               {error && <div style={{ color: THEME.red, fontFamily: "'Inter', sans-serif", fontSize: 12.5, marginBottom: 12 }}>{error}</div>}
               <button onClick={checkIn} className="ssq-btn-primary" style={{ width: "100%", background: THEME.primary, color: "#fff", border: "none", borderRadius: 999, padding: "12px 0", fontFamily: "'Poppins', sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 Get in line <IconChevronRight size={16} />
@@ -512,6 +543,7 @@ function StudentView({ onBack }) {
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: THEME.ink, marginTop: 12 }}>
                 {serviceInfo(myTicket.service).label}
                 {myTicket.studentType && <span style={{ color: THEME.slateDim }}> · {myTicket.studentType} Student</span>}
+                {myTicket.healthDocAction && <span style={{ color: THEME.slateDim }}> · {myTicket.healthDocAction}</span>}
               </div>
               {myTicket.status === "waiting" && (
                 <div style={{ marginTop: 22, borderTop: `1px solid ${THEME.border}`, paddingTop: 18, display: "flex", justifyContent: "space-around" }}>
@@ -603,6 +635,7 @@ function StaffConsole({ onExit }) {
   const [walkProgramEnrolled, setWalkProgramEnrolled] = useState("");
   const [walkAdvisorChoice, setWalkAdvisorChoice] = useState("");
   const [walkAdvisorOther, setWalkAdvisorOther] = useState("");
+  const [walkHealthDocAction, setWalkHealthDocAction] = useState("");
   const [queueFilter, setQueueFilter] = useState("all");
 
   const refresh = useCallback(async () => {
@@ -646,10 +679,11 @@ function StaffConsole({ onExit }) {
       programInquiry: walkStudentType === "New" ? walkProgramInquiry : "",
       programEnrolled: walkStudentType === "Returning" ? walkProgramEnrolled : "",
       workforceAdvisor,
+      healthDocAction: walkService === "H" ? walkHealthDocAction : "",
     });
     setTickets(data.tickets || []);
     setConnected(connected);
-    setWalkName(""); setWalkProgramInquiry(""); setWalkProgramEnrolled(""); setWalkAdvisorChoice(""); setWalkAdvisorOther("");
+    setWalkName(""); setWalkProgramInquiry(""); setWalkProgramEnrolled(""); setWalkAdvisorChoice(""); setWalkAdvisorOther(""); setWalkHealthDocAction("");
   };
   const resetDay = async () => {
     if (!window.confirm("Clear today's entire queue? This can't be undone.")) return;
@@ -658,8 +692,8 @@ function StaffConsole({ onExit }) {
     setConnected(connected);
   };
   const exportCsv = () => {
-    const rows = [["Number", "Name", "Student ID", "Student Type", "Service", "Program Inquiry", "Program Enrolled", "Workforce Advisor", "Status", "Checked In", "Called", "Representative"]];
-    tickets.forEach((t) => { rows.push([t.number, t.name, t.studentId, t.studentType || "", serviceInfo(t.service).label, t.programInquiry || "", t.programEnrolled || "", t.workforceAdvisor || "", t.status, t.checkinTime, t.calledTime || "", t.window || ""]); });
+    const rows = [["Number", "Name", "Student ID", "Student Type", "Service", "Program Inquiry", "Program Enrolled", "Workforce Advisor", "Health Doc Action", "Status", "Checked In", "Called", "Representative"]];
+    tickets.forEach((t) => { rows.push([t.number, t.name, t.studentId, t.studentType || "", serviceInfo(t.service).label, t.programInquiry || "", t.programEnrolled || "", t.workforceAdvisor || "", t.healthDocAction || "", t.status, t.checkinTime, t.calledTime || "", t.window || ""]); });
     const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -756,6 +790,14 @@ function StaffConsole({ onExit }) {
                     {PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 )}
+                {walkService === "H" && (
+                  <select value={walkHealthDocAction} onChange={(e) => setWalkHealthDocAction(e.target.value)}
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }}>
+                    <option value="" disabled>Review or submit?</option>
+                    <option value="Review">Review</option>
+                    <option value="Submit">Submit</option>
+                  </select>
+                )}
                 <select value={walkAdvisorChoice} onChange={(e) => setWalkAdvisorChoice(e.target.value)}
                   style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: walkAdvisorChoice === ADVISOR_OTHER_VALUE ? 8 : 12 }}>
                   <option value="">Workforce advisor: n/a</option>
@@ -790,6 +832,9 @@ function StaffConsole({ onExit }) {
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, marginLeft: 8 }}>{t.window}</span>
                           {(t.programInquiry || t.programEnrolled) && (
                             <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, marginLeft: 8 }}>· {t.programInquiry || t.programEnrolled}</span>
+                          )}
+                          {t.healthDocAction && (
+                            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, marginLeft: 8 }}>· {t.healthDocAction}</span>
                           )}
                           {t.workforceAdvisor && (
                             <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, marginLeft: 8 }}>· Advisor: {t.workforceAdvisor}</span>
@@ -829,6 +874,9 @@ function StaffConsole({ onExit }) {
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>{serviceInfo(t.service).label}</span>
                           {(t.programInquiry || t.programEnrolled) && (
                             <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>· {t.programInquiry || t.programEnrolled}</span>
+                          )}
+                          {t.healthDocAction && (
+                            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>· {t.healthDocAction}</span>
                           )}
                           {t.workforceAdvisor && (
                             <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>· Advisor: {t.workforceAdvisor}</span>
