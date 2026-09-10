@@ -84,7 +84,8 @@ const ADVISOR_DEFS = [
   "Angie Imbriale",
   "Abby Lambley",
   "Evelyn Quiros",
-  "Susana Nuenz"
+  "Susana Nuenz",
+  "Renee Gales"
 ];
 
 // Sentinel value used by the advisor dropdown to mean "let me type a
