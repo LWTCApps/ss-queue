@@ -28,6 +28,7 @@ const SERVICE_DEFS = [
   { code: "A", label: "Academic Advising", icon: "GradCap", queue: "student-services" },
   { code: "I", label: "ID Cards & Parking", icon: "IdCard", queue: "student-services" },
   { code: "G", label: "General Questions", icon: "Help", queue: "student-services" },
+  { code: "H", label: "Health Science Documents", icon: "FileText", queue: "health-services" }
 ];
 
 // Career Programs at LWTC. Career Dual Enrollment draws from this same
