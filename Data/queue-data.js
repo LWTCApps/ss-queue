@@ -85,7 +85,7 @@ const ADVISOR_DEFS = [
   "Angie Imbriale",
   "Abby Lambley",
   "Evelyn Quiros",
-  "Susana Nuenz",
+  "Susana Nunez",
   "Renee Gales"
 ];
 
