@@ -457,7 +457,7 @@ function StudentView({ onBack }) {
                 </React.Fragment>
               )}
 
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Workforce Advisor (if you have one)</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Student Services Faculty & Staff</div>
               <select value={advisorChoice} onChange={(e) => setAdvisorChoice(e.target.value)}
                 style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: advisorChoice === ADVISOR_OTHER_VALUE ? 10 : 16 }}>
                 <option value="">I don't know / not applicable</option>
