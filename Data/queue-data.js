@@ -76,7 +76,6 @@ const ADVISOR_DEFS = [
   // "John Doe",
   "Mark Kupper",
   "Lynne Bruce",
-  "Owen Whiting",
   "Danays Izquierdo",
   "Daniel Perez",
   "Cynthia Murin",
