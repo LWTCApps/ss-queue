@@ -1036,6 +1036,7 @@ function getInitialView() {
   try {
     const params = new URLSearchParams(window.location.search);
     if (params.has("display") || params.get("view") === "display") return "display";
+    if (params.has("student") || params.get("view") === "student") return "student";
   } catch (e) { /* ignore */ }
   return "landing";
 }
