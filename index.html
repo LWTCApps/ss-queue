@@ -89,8 +89,116 @@ const AVG_MINUTES = 7;
 // -----------------------------------------------------------------------
 const FLOW_URL = "https://default59943c4a62534d0d8a98fef50303d3.4b.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/28/workflows/ae2e1c6f5c404d21866c01942ecc5ff4/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=kiuUl5n4bjR6WXDFeFZeKzE0h0O4CXO5EcrC4ldLVfY";
 
+// -----------------------------------------------------------------------
+// PERFORMANCE: read traffic (the "getState" polling every screen does on
+// a timer) is by far the biggest source of load on Power Automate/
+// SharePoint, so it's split out from the write traffic (check-in, call
+// next, status changes, reset) below.
+//
+// Writes ALWAYS go through the Power Automate flow above (FLOW_URL) —
+// that's where the ticket-numbering and status logic lives.
+//
+// Reads (getState) can optionally bypass the flow and hit the SharePoint
+// REST API directly. This removes the highest-volume traffic from
+// Power Automate's daily action-count limits entirely and is usually
+// necessary once you have more than a handful of screens polling.
+//
+// To enable it:
+//   1. This page must be hosted on the SAME SharePoint site as the list
+//      (e.g. saved as a Site Page, or a document in a library on
+//      collierschools.sharepoint.com/sites/LWTCOperations) so the
+//      browser sends the viewer's SharePoint auth cookie automatically.
+//      A page hosted elsewhere (GitHub Pages, a random web host, etc.)
+//      cannot authenticate to the REST API — CORS + SharePoint's cookie
+//      auth won't allow it cross-origin. In that case leave this off
+//      and reads will keep going through the flow.
+//   2. Set SP_SITE_URL to the site collection URL, and SP_LIST_TITLE to
+//      the exact display name of the list (or set SP_LIST_GUID instead,
+//      which is slightly faster and doesn't break if the list is
+//      renamed — find it in List Settings > URL, the value after
+//      List=%7B...%7D).
+//   3. Set USE_SP_REST_FOR_READS to true.
+// -----------------------------------------------------------------------
+const USE_SP_REST_FOR_READS = false;
+const SP_SITE_URL = "https://collierschools.sharepoint.com/sites/LWTCOperations";
+const SP_LIST_TITLE = "";      // e.g. "Student Services Queue" — used if SP_LIST_GUID is blank
+const SP_LIST_GUID = "96a68d76-60b7-4760-887c-bec5df7dd740"; // matches the "table" id used in definition.json
+
+// Centralized polling cadence. Slower than the previous 3-4s defaults —
+// see the performance write-up for why: at 12 staff + 10 students + 2
+// displays, sub-5s polling multiplies into hundreds of thousands of
+// flow runs/day, which blows past Power Automate's daily action limits
+// long before the SharePoint connector's per-minute limit matters.
+const POLL_MS = {
+  student: 8000,
+  staff: 8000,
+  display: 5000,
+};
+
+// Local-time "yyyy-MM-dd" for today, matching the QueueDate filter the
+// flow uses (@formatDateTime(convertFromUtc(utcNow(), 'Eastern Standard Time'), 'yyyy-MM-dd'))
+function todayQueueDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const get = (t) => parts.find((p) => p.type === t).value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+// Maps a raw SharePoint list item (nometadata JSON) to the same ticket
+// shape the Power Automate flow's Select action produces, so the rest
+// of the app doesn't care which source answered the read.
+function mapSPItemToTicket(item) {
+  return {
+    id: item.ID,
+    number: item.Title,
+    name: item.StudentName,
+    studentId: item.StudentID,
+    service: item.Service, // choice field returned as plain string in nometadata mode
+    status: item.Status,
+    checkinTime: item.CheckInTime,
+    calledTime: item.CalledTime,
+    window: item.WindowNum,
+    studentType: item.StudentType || "",
+    programInquiry: item.ProgramInquiry || "",
+    programEnrolled: item.ProgramEnrolled || "",
+    workforceAdvisor: item.WorkforceAdvisor || "",
+    advisorEmail: item.AdvisorEmail || "",
+    healthDocAction: item.HealthDocAction || "",
+    studentEmail: item.StudentEmail || "",
+  };
+}
+
+async function getStateViaSPRest() {
+  const listSegment = SP_LIST_GUID
+    ? `lists(guid'${SP_LIST_GUID}')`
+    : `lists/getbytitle('${encodeURIComponent(SP_LIST_TITLE)}')`;
+  const select = [
+    "ID", "Title", "StudentName", "StudentID", "Service", "Status", "CheckInTime", "CalledTime",
+    "WindowNum", "StudentType", "ProgramInquiry", "ProgramEnrolled", "WorkforceAdvisor",
+    "AdvisorEmail", "HealthDocAction", "StudentEmail",
+  ].join(",");
+  const url = `${SP_SITE_URL}/_api/web/${listSegment}/items`
+    + `?$select=${select}`
+    + `&$filter=QueueDate eq '${todayQueueDate()}'`
+    + `&$top=500`;
+  const res = await fetch(url, {
+    method: "GET",
+    credentials: "same-origin", // relies on the SharePoint auth cookie — see notes above
+    headers: { Accept: "application/json;odata=nometadata" },
+  });
+  if (!res.ok) throw new Error(`sp-rest-http-${res.status}`);
+  const body = await res.json();
+  const tickets = (body.value || []).map(mapSPItemToTicket);
+  return { tickets };
+}
+
 function serviceInfo(code) {
   return SERVICES.find((s) => s.code === code) || SERVICES[SERVICES.length - 1];
+}
+function advisorEmailFor(name) {
+  const match = ADVISORS.find((a) => a.name === name);
+  return match ? match.email : "";
 }
 function elapsedMin(iso) {
   return Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -111,6 +219,8 @@ function previewCall(action, payload) {
       programEnrolled: payload.programEnrolled || "",
       workforceAdvisor: payload.workforceAdvisor || "",
       healthDocAction: payload.healthDocAction || "",
+      studentEmail: payload.studentEmail || "",
+      advisorEmail: payload.advisorEmail || "",
       status: "waiting", window: null, checkinTime: new Date().toISOString(), calledTime: null,
     };
     previewStore = { tickets: [...previewStore.tickets, ticket] };
@@ -144,6 +254,19 @@ async function callFlow(action, payload = {}) {
 }
 
 async function backend(action, payload) {
+  // Reads only: try the direct SharePoint REST path first if configured.
+  // Writes (checkin/setStatus/reset) always go through the flow, since
+  // that's where ticket numbering and status-change logic lives.
+  if (action === "getState" && USE_SP_REST_FOR_READS) {
+    try {
+      const data = await getStateViaSPRest();
+      return { data, connected: true };
+    } catch (e) {
+      // Falls through to the flow/preview path below — e.g. if the page
+      // isn't hosted on the SharePoint site so the auth cookie isn't
+      // available, or the list/site URL is misconfigured.
+    }
+  }
   try {
     const data = await callFlow(action, payload);
     return { data, connected: true };
@@ -152,12 +275,47 @@ async function backend(action, payload) {
   }
 }
 
+// Shared polling hook used by the student, staff, and display screens.
+// Two performance improvements over a plain setInterval:
+//  1. Pauses while the tab/window is hidden (a staff console left open
+//     in a background tab, or a phone screen that's locked, stops
+//     generating flow/SharePoint traffic entirely) and refreshes
+//     immediately when it becomes visible again.
+//  2. `enabled` lets a screen stop polling altogether once there's
+//     nothing left to change (e.g. a student's ticket has already been
+//     completed or cancelled).
+function usePolling(callback, intervalMs, enabled = true) {
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let cancelled = false;
+    let iv = null;
+
+    const run = () => { if (!cancelled && !document.hidden) callback(); };
+    const onVisibility = () => { if (!document.hidden) run(); };
+
+    run();
+    iv = setInterval(run, intervalMs);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [callback, intervalMs, enabled]);
+}
+
 function GlobalStyle() {
   return (
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
       * { box-sizing: border-box; }
-      body { margin: 0; }
+      html { -webkit-text-size-adjust: 100%; }
+      body { margin: 0; overflow-x: hidden; }
+      img { max-width: 100%; }
+      @media (max-width: 760px) {
+        .ssq-staff-grid { grid-template-columns: 1fr !important; }
+      }
       @keyframes flapIn {
         0% { opacity: 0; transform: translateY(-14px) rotateX(60deg); }
         60% { opacity: 1; }
@@ -271,7 +429,7 @@ function NowServingBoard({ tickets }) {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {active.map((t) => (
-            <div key={t.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px dashed ${THEME.border}`, paddingBottom: 8 }}>
+            <div key={t.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6, borderBottom: `1px dashed ${THEME.border}`, paddingBottom: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <Mono size={19}>{t.number}</Mono>
                 <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate }}>{serviceInfo(t.service).label}</span>
@@ -355,6 +513,7 @@ function StudentView({ onBack }) {
   const [tickets, setTickets] = useState([]);
   const [connected, setConnected] = useState(true);
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [studentId, setStudentId] = useState("");
   const [studentType, setStudentType] = useState(null);
   const [programInquiry, setProgramInquiry] = useState("");
@@ -372,13 +531,11 @@ function StudentView({ onBack }) {
     setConnected(connected);
   }, []);
 
-  useEffect(() => {
-    refresh();
-    const iv = setInterval(refresh, 4000);
-    return () => clearInterval(iv);
-  }, [refresh]);
-
   const myTicket = tickets.find((t) => t.id === myTicketId) || null;
+  const ticketResolved = !!myTicket && ["completed", "cancelled", "no-show"].includes(myTicket.status);
+  // Stop polling once this student's ticket is done — nothing left for
+  // them to see change, so there's no reason to keep generating traffic.
+  usePolling(refresh, POLL_MS.student, !ticketResolved);
 
   const checkIn = async () => {
     if (!name.trim()) { setError("Please enter your name."); return; }
@@ -386,11 +543,14 @@ function StudentView({ onBack }) {
     if (service === "H" && !healthDocAction) { setError("Please select Review or Submit for your Health Science document."); return; }
     setError("");
     const workforceAdvisor = advisorChoice === ADVISOR_OTHER_VALUE ? advisorOther.trim() : advisorChoice;
+    const advisorEmail = advisorChoice === ADVISOR_OTHER_VALUE ? "" : advisorEmailFor(advisorChoice);
     const { data, connected } = await backend("checkin", {
       service, name: name.trim(), studentId: studentId.trim(), studentType,
+      studentEmail: email.trim(),
       programInquiry: studentType === "New" ? programInquiry : "",
       programEnrolled: studentType === "Returning" ? programEnrolled : "",
       workforceAdvisor,
+      advisorEmail,
       healthDocAction: service === "H" ? healthDocAction : "",
     });
     setTickets(data.tickets || []);
@@ -403,7 +563,7 @@ function StudentView({ onBack }) {
     setTickets(data.tickets || []);
     setConnected(connected);
     setMyTicketId(null);
-    setName(""); setStudentId(""); setStudentType(null);
+    setName(""); setEmail(""); setStudentId(""); setStudentType(null);
     setProgramInquiry(""); setProgramEnrolled(""); setAdvisorChoice(""); setAdvisorOther(""); setHealthDocAction("");
   };
 
@@ -428,6 +588,9 @@ function StudentView({ onBack }) {
             <Panel style={{ padding: 22 }}>
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Full name</div>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jordan Alvarez"
+                style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }} />
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Email (optional — get a notice when you're called)</div>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jordan.alvarez@student.collierschools.com"
                 style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }} />
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Are you a new or returning student?</div>
               <select value={studentType || ""} onChange={(e) => setStudentType(e.target.value || null)}
@@ -466,7 +629,7 @@ function StudentView({ onBack }) {
               <select value={advisorChoice} onChange={(e) => setAdvisorChoice(e.target.value)}
                 style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: advisorChoice === ADVISOR_OTHER_VALUE ? 10 : 16 }}>
                 <option value="">I don't know / not applicable</option>
-                {ADVISORS.map((a) => <option key={a} value={a}>{a}</option>)}
+                {ADVISORS.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
                 <option value={ADVISOR_OTHER_VALUE}>Other — type name</option>
               </select>
               {advisorChoice === ADVISOR_OTHER_VALUE && (
@@ -600,7 +763,7 @@ function StaffLogin({ onSuccess, onBack }) {
         <span style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: 13, color: THEME.slate, letterSpacing: 0.3 }}>Staff Console</span>
       } />
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <Panel style={{ padding: 28, width: 300 }}>
+        <Panel style={{ padding: 28, width: "100%", maxWidth: 300 }}>
           <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: THEME.slate, fontFamily: "'Inter', sans-serif", fontSize: 13, cursor: "pointer", marginBottom: 18, padding: 0 }}>
             <IconArrowLeft size={15} /> Back
           </button>
@@ -629,6 +792,7 @@ function StaffConsole({ onExit }) {
   const [windowOther, setWindowOther] = useState("");
   const windowNum = windowChoice === ADVISOR_OTHER_VALUE ? windowOther.trim() : windowChoice;
   const [walkName, setWalkName] = useState("");
+  const [walkStudentEmail, setWalkStudentEmail] = useState("");
   const [walkService, setWalkService] = useState(SERVICES[0].code);
   const [walkStudentType, setWalkStudentType] = useState("New");
   const [walkProgramInquiry, setWalkProgramInquiry] = useState("");
@@ -644,11 +808,9 @@ function StaffConsole({ onExit }) {
     setConnected(connected);
   }, []);
 
-  useEffect(() => {
-    refresh();
-    const iv = setInterval(refresh, 4000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+  // Staff can always hit the manual Refresh button for an instant update,
+  // so the background poll can run slower.
+  usePolling(refresh, POLL_MS.staff);
 
   const inQueue = (t) => queueFilter === "all" || serviceInfo(t.service).queue === queueFilter;
   const queueFilteredTickets = tickets.filter(inQueue);
@@ -674,16 +836,19 @@ function StaffConsole({ onExit }) {
   const addWalkIn = async () => {
     if (!walkName.trim()) return;
     const workforceAdvisor = walkAdvisorChoice === ADVISOR_OTHER_VALUE ? walkAdvisorOther.trim() : walkAdvisorChoice;
+    const advisorEmail = walkAdvisorChoice === ADVISOR_OTHER_VALUE ? "" : advisorEmailFor(walkAdvisorChoice);
     const { data, connected } = await backend("checkin", {
       service: walkService, name: walkName.trim(), studentId: "", studentType: walkStudentType,
+      studentEmail: walkStudentEmail.trim(),
       programInquiry: walkStudentType === "New" ? walkProgramInquiry : "",
       programEnrolled: walkStudentType === "Returning" ? walkProgramEnrolled : "",
       workforceAdvisor,
+      advisorEmail,
       healthDocAction: walkService === "H" ? walkHealthDocAction : "",
     });
     setTickets(data.tickets || []);
     setConnected(connected);
-    setWalkName(""); setWalkProgramInquiry(""); setWalkProgramEnrolled(""); setWalkAdvisorChoice(""); setWalkAdvisorOther(""); setWalkHealthDocAction("");
+    setWalkName(""); setWalkStudentEmail(""); setWalkProgramInquiry(""); setWalkProgramEnrolled(""); setWalkAdvisorChoice(""); setWalkAdvisorOther(""); setWalkHealthDocAction("");
   };
   const resetDay = async () => {
     if (!window.confirm("Clear today's entire queue? This can't be undone.")) return;
@@ -692,8 +857,8 @@ function StaffConsole({ onExit }) {
     setConnected(connected);
   };
   const exportCsv = () => {
-    const rows = [["Number", "Name", "Student ID", "Student Type", "Service", "Program Inquiry", "Program Enrolled", "Workforce Advisor", "Health Doc Action", "Status", "Checked In", "Called", "Representative"]];
-    tickets.forEach((t) => { rows.push([t.number, t.name, t.studentId, t.studentType || "", serviceInfo(t.service).label, t.programInquiry || "", t.programEnrolled || "", t.workforceAdvisor || "", t.healthDocAction || "", t.status, t.checkinTime, t.calledTime || "", t.window || ""]); });
+    const rows = [["Number", "Name", "Student ID", "Student Email", "Student Type", "Service", "Program Inquiry", "Program Enrolled", "Workforce Advisor", "Advisor Email", "Health Doc Action", "Status", "Checked In", "Called", "Representative"]];
+    tickets.forEach((t) => { rows.push([t.number, t.name, t.studentId, t.studentEmail || "", t.studentType || "", serviceInfo(t.service).label, t.programInquiry || "", t.programEnrolled || "", t.workforceAdvisor || "", t.advisorEmail || "", t.healthDocAction || "", t.status, t.checkinTime, t.calledTime || "", t.window || ""]); });
     const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -714,9 +879,9 @@ function StaffConsole({ onExit }) {
       } />
       <div style={{ flex: 1, padding: "22px 16px 20px" }}>
         <div style={{ maxWidth: 900, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
             <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: 2, color: THEME.primaryDark, textTransform: "uppercase" }}>Staff Console</div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button onClick={refresh} style={{ display: "flex", alignItems: "center", gap: 6, background: THEME.panel, border: `1px solid ${THEME.border}`, color: THEME.slate, borderRadius: 8, padding: "7px 12px", fontFamily: "'Inter', sans-serif", fontSize: 12, cursor: "pointer" }}>
                 <IconRefresh size={13} /> Refresh
               </button>
@@ -726,7 +891,7 @@ function StaffConsole({ onExit }) {
             </div>
           </div>
           <ConnectionBanner connected={connected} />
-          <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
             {[{ id: "all", label: "All Queues" }, ...QUEUES].map((q) => (
               <button key={q.id} onClick={() => setQueueFilter(q.id)} style={{
                 padding: "8px 16px", borderRadius: 999, cursor: "pointer",
@@ -739,7 +904,7 @@ function StaffConsole({ onExit }) {
               </button>
             ))}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 320px) 1fr", gap: 18 }}>
+          <div className="ssq-staff-grid" style={{ display: "grid", gridTemplateColumns: "minmax(260px, 320px) 1fr", gap: 18 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <NowServingBoard tickets={queueFilteredTickets} />
               <Panel style={{ padding: 18 }}>
@@ -750,7 +915,7 @@ function StaffConsole({ onExit }) {
                 <select value={windowChoice} onChange={(e) => setWindowChoice(e.target.value)}
                   style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: windowChoice === ADVISOR_OTHER_VALUE ? 8 : 14 }}>
                   <option value="" disabled>Select your name…</option>
-                  {ADVISORS.map((a) => <option key={a} value={a}>{a}</option>)}
+                  {ADVISORS.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
                   <option value={ADVISOR_OTHER_VALUE}>Other — type name</option>
                 </select>
                 {windowChoice === ADVISOR_OTHER_VALUE && (
@@ -766,6 +931,8 @@ function StaffConsole({ onExit }) {
                   <IconPlusCircle size={13} /> Add walk-in
                 </div>
                 <input value={walkName} onChange={(e) => setWalkName(e.target.value)} placeholder="Student name"
+                  style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }} />
+                <input type="email" value={walkStudentEmail} onChange={(e) => setWalkStudentEmail(e.target.value)} placeholder="Student email (optional — for notification)"
                   style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }} />
                 <select value={walkService} onChange={(e) => setWalkService(e.target.value)}
                   style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }}>
@@ -801,7 +968,7 @@ function StaffConsole({ onExit }) {
                 <select value={walkAdvisorChoice} onChange={(e) => setWalkAdvisorChoice(e.target.value)}
                   style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: walkAdvisorChoice === ADVISOR_OTHER_VALUE ? 8 : 12 }}>
                   <option value="">Workforce advisor: n/a</option>
-                  {ADVISORS.map((a) => <option key={a} value={a}>{a}</option>)}
+                  {ADVISORS.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
                   <option value={ADVISOR_OTHER_VALUE}>Other — type name</option>
                 </select>
                 {walkAdvisorChoice === ADVISOR_OTHER_VALUE && (
@@ -824,7 +991,7 @@ function StaffConsole({ onExit }) {
                 ) : (
                   <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
                     {inProgress.map((t) => (
-                      <div key={t.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px" }}>
+                      <div key={t.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px" }}>
                         <div>
                           <Mono size={15}>{t.number}</Mono>
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginLeft: 10 }}>{t.name}</span>
@@ -842,14 +1009,14 @@ function StaffConsole({ onExit }) {
                         </div>
                         <div style={{ display: "flex", gap: 6 }}>
                           {t.status === "called" && (
-                            <button onClick={() => setStatus(t.id, "serving")} title="Mark serving" style={{ background: "none", border: `1px solid ${THEME.green}`, color: THEME.greenDark, borderRadius: 6, padding: "5px 8px", cursor: "pointer" }}>
+                            <button onClick={() => setStatus(t.id, "serving")} title="Mark serving" style={{ background: THEME.primaryDark, border: `1px solid ${THEME.primaryDark}`, color: "#fff", borderRadius: 6, padding: "5px 8px", cursor: "pointer" }}>
                               <IconCheck size={13} />
                             </button>
                           )}
                           <button onClick={() => setStatus(t.id, "completed")} title="Complete" style={{ background: THEME.green, border: "none", color: "#fff", borderRadius: 6, padding: "5px 8px", cursor: "pointer" }}>
                             <IconCheck size={13} />
                           </button>
-                          <button onClick={() => setStatus(t.id, "no-show")} title="No-show" style={{ background: "none", border: `1px solid ${THEME.red}`, color: THEME.red, borderRadius: 6, padding: "5px 8px", cursor: "pointer" }}>
+                          <button onClick={() => setStatus(t.id, "no-show")} title="No-show" style={{ background: THEME.red, border: `1px solid ${THEME.red}`, color: "#fff", borderRadius: 6, padding: "5px 8px", cursor: "pointer" }}>
                             <IconX size={13} />
                           </button>
                         </div>
@@ -865,8 +1032,8 @@ function StaffConsole({ onExit }) {
                 ) : (
                   <div className="ssq-scrollbar" style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8, maxHeight: 380, overflowY: "auto" }}>
                     {waiting.map((t, i) => (
-                      <div key={t.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div key={t.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px" }}>
+                        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", rowGap: 4, gap: 10 }}>
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim, width: 18 }}>{i + 1}</span>
                           <Mono size={15}>{t.number}</Mono>
                           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate }}>{t.name}</span>
@@ -882,7 +1049,7 @@ function StaffConsole({ onExit }) {
                             <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>· Advisor: {t.workforceAdvisor}</span>
                           )}
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
                           <span style={{ display: "flex", alignItems: "center", gap: 4, fontFamily: "'Inter', sans-serif", fontSize: 11, color: THEME.slateDim }}>
                             <IconClock size={11} /> {elapsedMin(t.checkinTime)}m
                           </span>
@@ -933,11 +1100,7 @@ function QueueDisplay({ onExit }) {
     setConnected(connected);
   }, []);
 
-  useEffect(() => {
-    refresh();
-    const iv = setInterval(refresh, 3000);
-    return () => clearInterval(iv);
-  }, [refresh]);
+  usePolling(refresh, POLL_MS.display);
 
   const active = tickets
     .filter((t) => t.status === "called" || t.status === "serving")
@@ -956,10 +1119,10 @@ function QueueDisplay({ onExit }) {
       </button>
 
       <div style={{ background: THEME.panel, borderBottom: `1px solid ${THEME.border}` }}>
-        <div style={{ padding: "22px 40px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ padding: "18px clamp(16px, 4vw, 40px)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <img src={LOGO_CCPS} alt="Collier County Public Schools — Workforce Education" style={{ height: 46 }} />
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 800, fontSize: 22, color: THEME.ink }}>Now Calling</div>
+            <div style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 800, fontSize: "clamp(18px, 3vw, 22px)", color: THEME.ink }}>Now Calling</div>
             <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 15, color: THEME.slate }}>
               {now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
             </div>
@@ -968,7 +1131,7 @@ function QueueDisplay({ onExit }) {
       </div>
       <div className="ssq-heat-bar" />
 
-      <div style={{ flex: 1, padding: "40px 40px 20px" }}>
+      <div style={{ flex: 1, padding: "40px clamp(16px, 4vw, 40px) 20px" }}>
         {!connected && (
           <div style={{ maxWidth: 640, margin: "0 auto 24px", display: "flex", alignItems: "center", gap: 8, background: "#FDF1E7", border: `1px solid ${THEME.orange}`, borderRadius: 8, padding: "10px 14px" }}>
             <IconWifiOff size={14} color={THEME.orange} />
@@ -989,15 +1152,15 @@ function QueueDisplay({ onExit }) {
         ) : (
           <div style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))",
             gap: 20, maxWidth: 1400, margin: "0 auto"
           }}>
             {active.map((t) => (
               <div key={t.id} style={{
                 background: THEME.panel, border: `2px solid ${t.status === "serving" ? THEME.green : THEME.orange}`,
-                borderRadius: 16, padding: "24px 28px", boxShadow: "0 2px 8px rgba(20,40,50,0.08)"
+                borderRadius: 16, padding: "24px clamp(16px, 4vw, 28px)", boxShadow: "0 2px 8px rgba(20,40,50,0.08)"
               }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
                   <span style={{
                     fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
                     color: t.status === "serving" ? THEME.greenDark : THEME.orange,
@@ -1008,15 +1171,15 @@ function QueueDisplay({ onExit }) {
                   </span>
                   <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slateDim }}>{serviceInfo(t.service).label}</span>
                 </div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
-                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 800, fontSize: 56, color: THEME.primaryDark, lineHeight: 1 }}>
+                <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 16 }}>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 800, fontSize: "clamp(34px, 8vw, 56px)", color: THEME.primaryDark, lineHeight: 1 }}>
                     {t.number}
                   </div>
-                  <div style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 700, fontSize: 26, color: THEME.ink }}>
+                  <div style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 700, fontSize: "clamp(18px, 4vw, 26px)", color: THEME.ink }}>
                     {(t.name || "").trim().split(" ")[0]}
                   </div>
                 </div>
-                <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 20, fontWeight: 600, color: THEME.ink, marginTop: 10 }}>
+                <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: "clamp(16px, 3vw, 20px)", fontWeight: 600, color: THEME.ink, marginTop: 10 }}>
                   {t.window || "—"}
                 </div>
               </div>
