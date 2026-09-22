@@ -90,7 +90,8 @@ const ADVISOR_DEFS = [
   { name: "Abby Lambley", email: "LambleAb@collierschools.com" },
   { name: "Evelyn Quiros", email: "quiroe@collierschools.com" },
   { name: "Susana Nuenz", email: "nunezs2@collierschools.com" },
-  { name: "Renee Gales", email: "galesr@collierschools.com" }
+  { name: "Renee Gales", email: "galesr@collierschools.com" },
+  { name: "Tiffany Randolph", email: "randot@collierschools.com"}
 ];
 
 // Sentinel value used by the advisor dropdown to mean "let me type a
