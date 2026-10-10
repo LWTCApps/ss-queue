@@ -461,12 +461,13 @@ function PulseDot({ color = THEME.green }) {
 }
 function StudentTypeBadge({ type }) {
   const isNew = type === "New";
+  const isGuest = type === "Guest";
   return (
     <span style={{
       fontFamily: "'Inter', sans-serif", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4,
-      color: isNew ? THEME.greenDark : THEME.primaryDark,
-      background: isNew ? "#EFF7E3" : "#E6F7FD",
-      border: `1px solid ${isNew ? THEME.green : THEME.primary}`,
+      color: isGuest ? "#B85A0F" : isNew ? THEME.greenDark : THEME.primaryDark,
+      background: isGuest ? "#FDF1E7" : isNew ? "#EFF7E3" : "#E6F7FD",
+      border: `1px solid ${isGuest ? THEME.orange : isNew ? THEME.green : THEME.primary}`,
       borderRadius: 999, padding: "2px 7px", marginLeft: 8
     }}>
       {type}
@@ -650,7 +651,7 @@ function StudentView({ onBack }) {
 
   const checkIn = async () => {
     if (!name.trim()) { setError("Please enter your name."); return; }
-    if (!studentType) { setError("Please let us know if you're a new or returning student."); return; }
+    if (!studentType) { setError("Please let us know if you're a new student, returning student, or guest."); return; }
     if (service === "H" && !healthDocAction) { setError("Please select Review or Submit for your Health Science document."); return; }
     setError("");
     const workforceAdvisor = advisorChoice === ADVISOR_OTHER_VALUE ? advisorOther.trim() : advisorChoice;
@@ -658,7 +659,7 @@ function StudentView({ onBack }) {
     const { data, connected } = await backend("checkin", {
       service, name: name.trim(), studentId: studentId.trim(), studentType,
       studentEmail: email.trim(),
-      programInquiry: studentType === "New" ? programInquiry : "",
+      programInquiry: (studentType === "New" || studentType === "Guest") ? programInquiry : "",
       programEnrolled: studentType === "Returning" ? programEnrolled : "",
       workforceAdvisor,
       advisorEmail,
@@ -705,7 +706,7 @@ function StudentView({ onBack }) {
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Email (optional — get a notice when you're called)</div>
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jordan.alvarez@student.collierschools.com"
                 style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }} />
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Are you a new or returning student?</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Are you a new student, returning student, or guest?</div>
               <select value={studentType || ""} onChange={(e) => setStudentType(e.target.value || null)}
                 style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }}>
                 <option value="" disabled>Select one…</option>
@@ -830,7 +831,7 @@ function StudentView({ onBack }) {
               <FlapNumber value={myTicket.number} size={52} />
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: THEME.ink, marginTop: 12 }}>
                 {serviceInfo(myTicket.service).label}
-                {myTicket.studentType && <span style={{ color: THEME.slateDim }}> · {myTicket.studentType} Student</span>}
+                {myTicket.studentType && <span style={{ color: THEME.slateDim }}> · {myTicket.studentType === "Guest" ? "Guest" : `${myTicket.studentType} Student`}</span>}
                 {myTicket.healthDocAction && <span style={{ color: THEME.slateDim }}> · {myTicket.healthDocAction}</span>}
               </div>
               {myTicket.status === "waiting" && (
@@ -1123,7 +1124,7 @@ function StaffConsole({ onExit }) {
     const { data, connected } = await staffBackend("checkin", {
       service: walkService, name: walkName.trim(), studentId: "", studentType: walkStudentType,
       studentEmail: walkStudentEmail.trim(),
-      programInquiry: walkStudentType === "New" ? walkProgramInquiry : "",
+      programInquiry: (walkStudentType === "New" || walkStudentType === "Guest") ? walkProgramInquiry : "",
       programEnrolled: walkStudentType === "Returning" ? walkProgramEnrolled : "",
       workforceAdvisor,
       advisorEmail,
@@ -1246,8 +1247,9 @@ function StaffConsole({ onExit }) {
                   style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }}>
                   <option value="New">New Student</option>
                   <option value="Returning">Returning Student</option>
+                  <option value="Guest">Guest</option>
                 </select>
-                {walkStudentType === "New" && (
+                {(walkStudentType === "New" || walkStudentType === "Guest") && (
                   <select value={walkProgramInquiry} onChange={(e) => setWalkProgramInquiry(e.target.value)}
                     style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "8px 10px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 13, marginBottom: 10 }}>
                     <option value="">Program inquiry: not sure yet</option>
