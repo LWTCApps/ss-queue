@@ -714,7 +714,7 @@ function StudentView({ onBack }) {
                 <option value="Guest">Guest</option>
               </select>
 
-              {studentType === "New, Guest" && (
+              {studentType === "New" && (
                 <React.Fragment>
                   <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Which program are you interested in?</div>
                   <select value={programInquiry} onChange={(e) => setProgramInquiry(e.target.value)}
@@ -734,6 +734,17 @@ function StudentView({ onBack }) {
                   <select value={programEnrolled} onChange={(e) => setProgramEnrolled(e.target.value)}
                     style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }}>
                     <option value="">Select a program…</option>
+                    {PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </React.Fragment>
+              )}
+
+              {studentType === "Guest" && (
+                <React.Fragment>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Which program are you interested in?</div>
+                  <select value={programInquiry} onChange={(e) => setProgramInquiry(e.target.value)}
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }}>
+                    <option value="">Not sure yet</option>
                     {PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </React.Fragment>
