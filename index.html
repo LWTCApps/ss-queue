@@ -711,9 +711,10 @@ function StudentView({ onBack }) {
                 <option value="" disabled>Select one…</option>
                 <option value="New">New Student</option>
                 <option value="Returning">Returning Student</option>
+                <option value="Guest">Guest</option>
               </select>
 
-              {studentType === "New" && (
+              {studentType === "New, Guest" && (
                 <React.Fragment>
                   <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Which program are you interested in?</div>
                   <select value={programInquiry} onChange={(e) => setProgramInquiry(e.target.value)}
