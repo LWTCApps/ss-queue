@@ -535,6 +535,22 @@ function ConnectionBanner({ connected }) {
   );
 }
 
+// Shown when the gateway can't be reached (Worker busy, flow slow/down, Wi-Fi drop).
+// The screen keeps the last real data; this just tells people. It clears itself on the next good poll.
+function ReconnectingBanner({ show, hasLoaded }) {
+  if (!show) return null;
+  return (
+    <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, background: "#FDF1E7", border: `1px solid ${THEME.orange}`, borderRadius: 8, padding: "9px 12px", marginBottom: 16 }}>
+      <IconWifiOff size={14} color={THEME.orange} />
+      <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: "#9A4A10" }}>
+        {hasLoaded
+          ? "Reconnecting… showing the last update. This will clear on its own."
+          : "Can't reach the queue right now. We'll keep trying."}
+      </span>
+    </div>
+  );
+}
+
 function PageHeader({ onHome, right }) {
   return (
     <div>
@@ -694,11 +710,14 @@ function StudentView({ onBack, guest = false }) {
   const [service, setService] = useState(SERVICES[0].code);
   const [myTicketId, setMyTicketId] = useState(null);
   const [myCancelToken, setMyCancelToken] = useState("");
+  const [offline, setOffline] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
 
   const refresh = useCallback(async () => {
     const { data, connected } = await backend("getState");
-    if (!data) return false; // busy/unreachable: keep what's on screen, back off
+    if (!data) { setOffline(true); return false; } // busy/unreachable: keep what's on screen, back off
+    setOffline(false); setLoaded(true);
     setTickets(data.tickets || []);
     setConnected(connected);
   }, []);
@@ -763,6 +782,7 @@ function StudentView({ onBack, guest = false }) {
           </button>
           <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: 2, color: THEME.primaryDark, textTransform: "uppercase", marginBottom: 12 }}>{guest ? "Guest Check-In" : "Student Check-In"}</div>
           <ConnectionBanner connected={connected} />
+          <ReconnectingBanner show={offline} hasLoaded={loaded} />
           {!myTicket || myTicket.status === "cancelled" ? (
             <Panel style={{ padding: 22 }}>
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Full name</div>
@@ -1155,10 +1175,13 @@ function StaffConsole({ onExit }) {
   const [walkHealthDocAction, setWalkHealthDocAction] = useState("");
   const [queueFilter, setQueueFilter] = useState("all");
   const [consoleTab, setConsoleTab] = useState("queue");
+  const [offline, setOffline] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
     const { data, connected } = await staffBackend("getState");
-    if (!data) return false; // busy/unreachable: keep what's on screen, back off
+    if (!data) { setOffline(true); return false; } // busy/unreachable: keep what's on screen, back off
+    setOffline(false); setLoaded(true);
     setTickets(data.tickets || []);
     setConnected(connected);
   }, []);
@@ -1271,6 +1294,7 @@ function StaffConsole({ onExit }) {
             </div>
           </div>
           <ConnectionBanner connected={connected} />
+          <ReconnectingBanner show={offline} hasLoaded={loaded} />
           {consoleTab === "queue" && (<>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
             {[{ id: "all", label: "All Queues" }, ...QUEUES].map((q) => (
@@ -1477,10 +1501,13 @@ function QueueDisplay({ onExit }) {
   const [tickets, setTickets] = useState([]);
   const [connected, setConnected] = useState(true);
   const now = useClock();
+  const [offline, setOffline] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
     const { data, connected } = await displayBackend();
-    if (!data) return false; // busy/unreachable: keep the board up, back off
+    if (!data) { setOffline(true); return false; } // busy/unreachable: keep the board up, back off
+    setOffline(false); setLoaded(true);
     setTickets(data.tickets || []);
     setConnected(connected);
   }, []);
@@ -1517,6 +1544,7 @@ function QueueDisplay({ onExit }) {
       <div className="ssq-heat-bar" />
 
       <div style={{ flex: 1, padding: "40px clamp(16px, 4vw, 40px) 20px" }}>
+        <div style={{ maxWidth: 640, margin: "0 auto" }}><ReconnectingBanner show={offline} hasLoaded={loaded} /></div>
         {!connected && (
           <div style={{ maxWidth: 640, margin: "0 auto 24px", display: "flex", alignItems: "center", gap: 8, background: "#FDF1E7", border: `1px solid ${THEME.orange}`, borderRadius: 8, padding: "10px 14px" }}>
             <IconWifiOff size={14} color={THEME.orange} />
