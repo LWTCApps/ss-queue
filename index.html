@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Student Services Queue</title>
+<meta name="theme-color" content="#00AEEF">
+<!-- Tab icon: a white "take a number" ticket on the brand blue. Inline so it needs no extra file. -->
+<link rel="icon" href="assets/logos/svg/lwtc-icon-cluster.svg" type="image/svg+xml">
 </head>
 <body>
 <div id="ssq-root"></div>
@@ -41,6 +44,7 @@ function svgProps({ size = 16, color = "currentColor" } = {}) {
   return { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" };
 }
 const IconUser = (p) => <svg {...svgProps(p)}><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 4-6 8-6s8 2 8 6" /></svg>;
+const IconUserPlus = (p) => <svg {...svgProps(p)}><circle cx="10" cy="8" r="4" /><path d="M2 21c0-4 4-6 8-6s8 2 8 6" /><path d="M19 8v6" /><path d="M16 11h6" /></svg>;
 const IconLock = (p) => <svg {...svgProps(p)}><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>;
 const IconRefresh = (p) => <svg {...svgProps(p)}><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /><path d="M3 21v-5h5" /></svg>;
 const IconCheck = (p) => <svg {...svgProps(p)}><path d="M20 6 9 17l-5-5" /></svg>;
@@ -129,21 +133,30 @@ const SP_SITE_URL = "https://collierschools.sharepoint.com/sites/LWTCOperations"
 const SP_LIST_TITLE = "";      // e.g. "Student Services Queue" — used if SP_LIST_GUID is blank
 const SP_LIST_GUID = "96a68d76-60b7-4760-887c-bec5df7dd740"; // matches the "table" id used in definition.json
 
-// Centralized polling cadence. Slower than the previous 3-4s defaults —
-// see the performance write-up for why: at 12 staff + 10 students + 2
-// displays, sub-5s polling multiplies into hundreds of thousands of
-// flow runs/day, which blows past Power Automate's daily action limits
-// long before the SharePoint connector's per-minute limit matters.
-// Tuned for the Cloudflare Workers FREE plan (100,000 requests/day): with ~20 staff,
-// ~5 students and 2 displays this is about 2.5 requests/s = ~81,000 per 9-hour day.
-// If you move to Workers Paid you can go back to student: 8000, staff: 8000, display: 5000.
-// Staff see their own actions instantly (the write response refreshes the screen);
-// the interval only affects how quickly they see OTHER people's changes.
+// Centralized polling cadence.
+// Polling NO LONGER drives Power Automate runs: the Worker answers reads from its
+// cache and starts at most ONE flow "getState" run per minute (single-flight).
+// Every write made in this app (check-in, call, status change, reset) refreshes
+// that cache immediately, so these intervals only decide how quickly a screen
+// shows OTHER people's changes. Edits made directly in SharePoint take up to
+// ~60 s to appear (Worker variable STATE_FRESH_SECONDS).
+// The intervals are now limited by the Cloudflare Workers FREE plan (100,000
+// requests/day), not by the flow: with ~20 staff, ~5 students and 2 displays this
+// is about 2.5 requests/s = ~81,000 per 9-hour day. On Workers Paid you can go to
+// student: 8000, staff: 8000, display: 5000.
+// Staff see their own actions instantly (the write response refreshes the screen).
 const POLL_MS = {
   student: 10000,
   staff: 12000,
   display: 6000,
 };
+// When the Worker is busy (503 "busy-try-again") or unreachable, a screen keeps
+// showing what it has and waits longer before asking again: each failure doubles
+// the delay, up to POLL_MAX_BACKOFF_MS, and the first success resets it.
+const POLL_MAX_BACKOFF_MS = 60000;
+// Each wait is randomly stretched by up to this fraction so many screens opened
+// at the same moment (e.g. after a Wi-Fi blip) don't all poll in lockstep.
+const POLL_JITTER = 0.2;
 
 // Local-time "yyyy-MM-dd" for today, matching the QueueDate filter the
 // flow uses (@formatDateTime(convertFromUtc(utcNow(), 'Eastern Standard Time'), 'yyyy-MM-dd'))
@@ -358,12 +371,23 @@ async function callStaffGateway(action, payload = {}) {
   return res.json();
 }
 
+// Preview mode (local, in-tab data) is ONLY used when no gateway is configured.
+// With a gateway, a failed call (Worker busy/503, flow error/502, network drop)
+// returns data: null so the screen keeps what it already shows and the poller
+// backs off. It must never fall back to preview data, which would show fake
+// tickets — or hand a student a made-up ticket number on check-in.
+function gatewayFailure(action, payload, e) {
+  if (!GATEWAY_URL) return { data: previewCall(action, payload), connected: false };
+  console.warn(`[gateway] ${action} failed: ${e && e.message ? e.message : e}`);
+  return { data: null, connected: true, error: e && e.message ? e.message : "gateway-error" };
+}
+
 async function backend(action, payload) {
   try {
     const data = await callPublicGateway(action, payload);
     return { data, connected: true };
   } catch (e) {
-    return { data: previewCall(action, payload), connected: false };
+    return gatewayFailure(action, payload, e);
   }
 }
 
@@ -372,7 +396,7 @@ async function displayBackend() {
     const data = await callDisplayGateway();
     return { data, connected: true };
   } catch (e) {
-    return { data: previewCall("getState", {}), connected: false };
+    return gatewayFailure("getState", {}, e);
   }
 }
 
@@ -381,9 +405,11 @@ async function staffBackend(action, payload) {
     const data = await callStaffGateway(action, payload);
     return { data, connected: true };
   } catch (e) {
-    return { data: previewCall(action, payload), connected: false };
+    return gatewayFailure(action, payload, e);
   }
 }
+
+const TRY_AGAIN_MSG = "The queue is busy right now. Please wait a few seconds and try again.";
 
 // Shared polling hook used by the student, staff, and display screens.
 // Two performance improvements over a plain setInterval:
@@ -394,22 +420,42 @@ async function staffBackend(action, payload) {
 //  2. `enabled` lets a screen stop polling altogether once there's
 //     nothing left to change (e.g. a student's ticket has already been
 //     completed or cancelled).
+//  3. Backs off when the gateway is busy or down: if `callback` returns
+//     false, the next wait doubles (up to POLL_MAX_BACKOFF_MS). Waits are
+//     jittered so screens don't all poll at the same instant, and only one
+//     request per screen is ever in flight.
 function usePolling(callback, intervalMs, enabled = true) {
   useEffect(() => {
     if (!enabled) return undefined;
     let cancelled = false;
-    let iv = null;
+    let timer = null;
+    let inFlight = false;
+    let failures = 0;
 
-    const run = () => { if (!cancelled && !document.hidden) callback(); };
+    const schedule = () => {
+      clearTimeout(timer);
+      const base = Math.min(intervalMs * 2 ** failures, Math.max(intervalMs, POLL_MAX_BACKOFF_MS));
+      timer = setTimeout(run, base * (1 + Math.random() * POLL_JITTER));
+    };
+    const run = async () => {
+      if (cancelled) return;
+      if (document.hidden || inFlight) { schedule(); return; }
+      inFlight = true;
+      let ok = true;
+      try { ok = (await callback()) !== false; } catch (e) { ok = false; }
+      inFlight = false;
+      if (cancelled) return;
+      failures = ok ? 0 : Math.min(failures + 1, 6);
+      schedule();
+    };
     const onVisibility = () => { if (!document.hidden) run(); };
 
     run();
-    iv = setInterval(run, intervalMs);
     document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       cancelled = true;
-      clearInterval(iv);
+      clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [callback, intervalMs, enabled]);
@@ -588,6 +634,15 @@ function Landing({ onPick }) {
               Check in and get your place in line.
             </div>
           </button>
+          <button onClick={() => onPick("guest")} style={{ width: 240, padding: "28px 22px", background: THEME.panel, border: `1px solid ${THEME.border}`, borderRadius: 14, boxShadow: "0 1px 3px rgba(20,40,50,0.06)", cursor: "pointer", textAlign: "left", color: THEME.ink }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: "#FDF1E7", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <IconUserPlus size={20} color={THEME.orange} />
+            </div>
+            <div style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 700, fontSize: 16, marginTop: 14 }}>I'm a Guest</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12.5, color: THEME.slate, marginTop: 6, lineHeight: 1.5 }}>
+              Visiting or asking about a program? Check in here.
+            </div>
+          </button>
           <button onClick={() => onPick("staff")} style={{ width: 240, padding: "28px 22px", background: THEME.panel, border: `1px solid ${THEME.border}`, borderRadius: 14, boxShadow: "0 1px 3px rgba(20,40,50,0.06)", cursor: "pointer", textAlign: "left", color: THEME.ink }}>
             <div style={{ width: 40, height: 40, borderRadius: 10, background: "#EFF4E4", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <IconLock size={20} color={THEME.greenDark} />
@@ -620,13 +675,17 @@ function Landing({ onPick }) {
 
 // ---------- Student View ----------
 
-function StudentView({ onBack }) {
+// `guest` = opened from the "I'm a Guest" tile: the visitor type is preset to
+// Guest and the new/returning/guest question is skipped.
+function StudentView({ onBack, guest = false }) {
+  const initialType = guest ? "Guest" : null;
   const [tickets, setTickets] = useState([]);
   const [connected, setConnected] = useState(true);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [studentId, setStudentId] = useState("");
-  const [studentType, setStudentType] = useState(null);
+  const [studentType, setStudentType] = useState(initialType);
+  const [submitting, setSubmitting] = useState(false);
   const [programInquiry, setProgramInquiry] = useState("");
   const [programEnrolled, setProgramEnrolled] = useState("");
   const [advisorChoice, setAdvisorChoice] = useState("");
@@ -639,6 +698,7 @@ function StudentView({ onBack }) {
 
   const refresh = useCallback(async () => {
     const { data, connected } = await backend("getState");
+    if (!data) return false; // busy/unreachable: keep what's on screen, back off
     setTickets(data.tickets || []);
     setConnected(connected);
   }, []);
@@ -653,7 +713,9 @@ function StudentView({ onBack }) {
     if (!name.trim()) { setError("Please enter your name."); return; }
     if (!studentType) { setError("Please let us know if you're a new student, returning student, or guest."); return; }
     if (service === "H" && !healthDocAction) { setError("Please select Review or Submit for your Health Science document."); return; }
+    if (submitting) return; // no double check-ins from a double tap
     setError("");
+    setSubmitting(true);
     const workforceAdvisor = advisorChoice === ADVISOR_OTHER_VALUE ? advisorOther.trim() : advisorChoice;
     const advisorEmail = advisorChoice === ADVISOR_OTHER_VALUE ? "" : advisorEmailFor(advisorChoice);
     const { data, connected } = await backend("checkin", {
@@ -665,6 +727,8 @@ function StudentView({ onBack }) {
       advisorEmail,
       healthDocAction: service === "H" ? healthDocAction : "",
     });
+    setSubmitting(false);
+    if (!data) { setError(TRY_AGAIN_MSG); return; }
     setTickets(data.tickets || []);
     setConnected(connected);
     setMyTicketId(data.createdId);
@@ -673,11 +737,12 @@ function StudentView({ onBack }) {
 
   const cancelTicket = async () => {
     const { data, connected } = await backend("cancel", { id: myTicketId, token: myCancelToken });
+    if (!data) { window.alert(TRY_AGAIN_MSG); return; }
     setTickets(data.tickets || []);
     setConnected(connected);
     setMyTicketId(null);
     setMyCancelToken("");
-    setName(""); setEmail(""); setStudentId(""); setStudentType(null);
+    setName(""); setEmail(""); setStudentId(""); setStudentType(initialType);
     setProgramInquiry(""); setProgramEnrolled(""); setAdvisorChoice(""); setAdvisorOther(""); setHealthDocAction("");
   };
 
@@ -696,7 +761,7 @@ function StudentView({ onBack }) {
           <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: THEME.slate, fontFamily: "'Inter', sans-serif", fontSize: 13, cursor: "pointer", marginBottom: 18, padding: 0 }}>
             <IconArrowLeft size={15} /> Back
           </button>
-          <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: 2, color: THEME.primaryDark, textTransform: "uppercase", marginBottom: 12 }}>Student Check-In</div>
+          <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: 2, color: THEME.primaryDark, textTransform: "uppercase", marginBottom: 12 }}>{guest ? "Guest Check-In" : "Student Check-In"}</div>
           <ConnectionBanner connected={connected} />
           {!myTicket || myTicket.status === "cancelled" ? (
             <Panel style={{ padding: 22 }}>
@@ -706,14 +771,18 @@ function StudentView({ onBack }) {
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Email (optional — get a notice when you're called)</div>
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jordan.alvarez@student.collierschools.com"
                 style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }} />
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Are you a new student, returning student, or guest?</div>
-              <select value={studentType || ""} onChange={(e) => setStudentType(e.target.value || null)}
-                style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }}>
-                <option value="" disabled>Select one…</option>
-                <option value="New">New Student</option>
-                <option value="Returning">Returning Student</option>
-                <option value="Guest">Guest</option>
-              </select>
+              {!guest && (
+                <React.Fragment>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: THEME.slate, marginBottom: 6 }}>Are you a new student, returning student, or guest?</div>
+                  <select value={studentType || ""} onChange={(e) => setStudentType(e.target.value || null)}
+                    style={{ width: "100%", background: THEME.bg, border: `1px solid ${THEME.border}`, borderRadius: 8, padding: "10px 12px", color: THEME.ink, fontFamily: "'Inter', sans-serif", fontSize: 14, marginBottom: 14 }}>
+                    <option value="" disabled>Select one…</option>
+                    <option value="New">New Student</option>
+                    <option value="Returning">Returning Student</option>
+                    <option value="Guest">Guest</option>
+                  </select>
+                </React.Fragment>
+              )}
 
               {studentType === "New" && (
                 <React.Fragment>
@@ -822,7 +891,7 @@ function StudentView({ onBack }) {
               )}
               {error && <div style={{ color: THEME.red, fontFamily: "'Inter', sans-serif", fontSize: 12.5, marginBottom: 12 }}>{error}</div>}
               <button onClick={checkIn} className="ssq-btn-primary" style={{ width: "100%", background: THEME.primary, color: "#fff", border: "none", borderRadius: 999, padding: "12px 0", fontFamily: "'Poppins', sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                Get in line <IconChevronRight size={16} />
+                {submitting ? "Checking in…" : <React.Fragment>Get in line <IconChevronRight size={16} /></React.Fragment>}
               </button>
             </Panel>
           ) : (
@@ -942,6 +1011,7 @@ function ReportsPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     const { data, connected } = await staffBackend("report", { days });
+    if (!data) { setLoading(false); return; } // keep the last report on screen
     setTickets(data.tickets || []);
     setConnected(connected);
     setLoading(false);
@@ -1088,9 +1158,22 @@ function StaffConsole({ onExit }) {
 
   const refresh = useCallback(async () => {
     const { data, connected } = await staffBackend("getState");
+    if (!data) return false; // busy/unreachable: keep what's on screen, back off
     setTickets(data.tickets || []);
     setConnected(connected);
   }, []);
+
+  // Applies a write's response. On failure nothing changes on screen and staff
+  // are told to retry (the action did NOT go through as far as we know).
+  const applyWrite = ({ data, connected, error }) => {
+    if (!data) {
+      if (error !== "not-signed-in") window.alert(TRY_AGAIN_MSG);
+      return false;
+    }
+    setTickets(data.tickets || []);
+    setConnected(connected);
+    return true;
+  };
 
   // Staff can always hit the manual Refresh button for an instant update,
   // so the background poll can run slower.
@@ -1104,24 +1187,20 @@ function StaffConsole({ onExit }) {
 
   const callStudent = async (id) => {
     if (!windowNum.trim()) return;
-    const { data, connected } = await staffBackend("setStatus", { id, status: "called", window: windowNum });
-    setTickets(data.tickets || []);
-    setConnected(connected);
+    applyWrite(await staffBackend("setStatus", { id, status: "called", window: windowNum }));
   };
   const callNext = async () => {
     if (waiting.length === 0 || !windowNum.trim()) return;
     callStudent(waiting[0].id);
   };
   const setStatus = async (id, status) => {
-    const { data, connected } = await staffBackend("setStatus", { id, status });
-    setTickets(data.tickets || []);
-    setConnected(connected);
+    applyWrite(await staffBackend("setStatus", { id, status }));
   };
   const addWalkIn = async () => {
     if (!walkName.trim()) return;
     const workforceAdvisor = walkAdvisorChoice === ADVISOR_OTHER_VALUE ? walkAdvisorOther.trim() : walkAdvisorChoice;
     const advisorEmail = walkAdvisorChoice === ADVISOR_OTHER_VALUE ? "" : advisorEmailFor(walkAdvisorChoice);
-    const { data, connected } = await staffBackend("checkin", {
+    const result = await staffBackend("checkin", {
       service: walkService, name: walkName.trim(), studentId: "", studentType: walkStudentType,
       studentEmail: walkStudentEmail.trim(),
       programInquiry: (walkStudentType === "New" || walkStudentType === "Guest") ? walkProgramInquiry : "",
@@ -1130,15 +1209,12 @@ function StaffConsole({ onExit }) {
       advisorEmail,
       healthDocAction: walkService === "H" ? walkHealthDocAction : "",
     });
-    setTickets(data.tickets || []);
-    setConnected(connected);
+    if (!applyWrite(result)) return; // keep the form filled in so staff can retry
     setWalkName(""); setWalkStudentEmail(""); setWalkProgramInquiry(""); setWalkProgramEnrolled(""); setWalkAdvisorChoice(""); setWalkAdvisorOther(""); setWalkHealthDocAction("");
   };
   const resetDay = async () => {
     if (!window.confirm("Clear today's entire queue? This can't be undone.")) return;
-    const { data, connected } = await staffBackend("reset");
-    setTickets(data.tickets || []);
-    setConnected(connected);
+    applyWrite(await staffBackend("reset"));
   };
   const exportCsv = () => {
     const rows = [["Number", "Name", "Student ID", "Student Email", "Student Type", "Service", "Program Inquiry", "Program Enrolled", "Workforce Advisor", "Advisor Email", "Health Doc Action", "Status", "Checked In", "Called", "Representative"]];
@@ -1404,6 +1480,7 @@ function QueueDisplay({ onExit }) {
 
   const refresh = useCallback(async () => {
     const { data, connected } = await displayBackend();
+    if (!data) return false; // busy/unreachable: keep the board up, back off
     setTickets(data.tickets || []);
     setConnected(connected);
   }, []);
@@ -1508,6 +1585,7 @@ function getInitialView() {
     const params = new URLSearchParams(window.location.search);
     if (params.has("display") || params.get("view") === "display") return "display";
     if (params.has("student") || params.get("view") === "student") return "student";
+    if (params.has("guest") || params.get("view") === "guest") return "guest";
   } catch (e) { /* ignore */ }
   return "landing";
 }
@@ -1527,7 +1605,8 @@ function App() {
   };
 
   if (view === "landing") return <Landing onPick={setView} />;
-  if (view === "student") return <StudentView onBack={goLanding} />;
+  if (view === "student") return <StudentView key="student" onBack={goLanding} />;
+  if (view === "guest") return <StudentView key="guest" guest onBack={goLanding} />;
   if (view === "display") return <QueueDisplay onExit={goLanding} />;
   if (view === "staff") {
     if (!staffAuthed) return <StaffLogin onSuccess={() => setStaffAuthed(true)} onBack={goLanding} />;
