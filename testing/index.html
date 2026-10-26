@@ -81,21 +81,30 @@ const ICONS = { Clipboard: IconClipboard, FileText: IconFileText, Wallet: IconWa
 const TESTING_QUEUE = "testing-center";
 const TESTING_CODE = "TC";
 const TESTING_DEF = { code: TESTING_CODE, label: "Testing Center", queue: TESTING_QUEUE, icon: "Clipboard" };
-const SERVICE_DEFS_ALL = SERVICE_DEFS.some((s) => s.queue === TESTING_QUEUE)
-  ? SERVICE_DEFS
-  : [...SERVICE_DEFS.slice(0, -1), TESTING_DEF, SERVICE_DEFS[SERVICE_DEFS.length - 1]];
+// Testing Questions: an ordinary MAIN-console queue (code TQ) for questions about testing, answered by main staff.
+// It is NOT hidden from the main console (unlike the Testing Center). Defined in Data/queue-data.js? That one wins.
+const TQ_QUEUE = "testing-questions";
+const TQ_CODE = "TQ";
+const TQ_DEF = { code: TQ_CODE, label: "Testing Questions", queue: TQ_QUEUE, icon: "Help" };
+const SERVICE_EXTRAS = [TESTING_DEF, TQ_DEF].filter((d) => !SERVICE_DEFS.some((s) => s.queue === d.queue));
+const SERVICE_DEFS_ALL = [...SERVICE_DEFS.slice(0, -1), ...SERVICE_EXTRAS, SERVICE_DEFS[SERVICE_DEFS.length - 1]];
 const SERVICES = SERVICE_DEFS_ALL.map((s) => ({ ...s, Icon: ICONS[s.icon] || IconClipboard }));
 function isTestingTicket(t) {
   const svc = SERVICES.find((x) => x.code === t.service);
   return !!svc && svc.queue === TESTING_QUEUE;
 }
 const PROGRAMS = PROGRAM_DEFS;
-const ADVISORS = ADVISOR_DEFS;
+// Advisors are listed alphabetically by first name in every list and form.
+// Leading titles such as "Dr." are ignored when sorting; ties fall back to the full name.
+const firstNameKey = (n) => String(n || "").trim().replace(/^((dr|mr|mrs|ms|mx|prof)\.?\s+)+/i, "").toLowerCase();
+const ADVISORS = [...ADVISOR_DEFS].sort((a, b) =>
+  firstNameKey(a.name).localeCompare(firstNameKey(b.name), "en") || String(a.name).localeCompare(String(b.name), "en"));
 
 const QUEUES = [
   { id: "financial-aid", label: "Financial Aid" },
   { id: "student-services", label: "Student Services" },
   { id: "health-services", label: "Health Sciences" },
+  { id: "testing-questions", label: "Testing Questions" },
 ];
 
 function queueInfo(id) {
@@ -1329,8 +1338,8 @@ function StaffConsole({ onExit }) {
                       {t.label}
                     </button>
                     {t.id === "reports" && ADVISOR_TOOLS && isTestingStaff && (
-                      <a href="/testing/" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "5px 14px", borderRadius: 999, textDecoration: "none", color: THEME.primaryDark, fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 600 }}>
-                        Testing Center &rarr;
+                      <a href="/testing/" target="_blank" rel="noopener noreferrer" title="Opens the Testing Center queue in a new tab" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "5px 14px", borderRadius: 999, textDecoration: "none", color: THEME.primaryDark, fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 600 }}>
+                        Testing Center &#8599;
                       </a>
                     )}
                   </React.Fragment>
