@@ -831,10 +831,12 @@ function AdvisorsPanel() {
     const p = picks[key] || {};
     const mode = p.mode || rec.mode || "auto";
     const dur = p.duration || "none";
+    if (mode !== "auto" && dur === "time" && !p.time) { window.alert("Pick a time first."); return; }
     await send(key, "setOverride", {
       mode,
       minutes: /^\d+$/.test(dur) ? Number(dur) : 0,
       untilEod: dur === "eod",
+      untilTime: dur === "time" ? p.time : "",
     });
   };
 
@@ -902,11 +904,17 @@ function AdvisorsPanel() {
                   </select>
                   {mode !== "auto" && (
                     <select value={p.duration || "none"} onChange={(e) => setPicks({ ...picks, [key]: { ...p, duration: e.target.value } })} style={selectStyle} aria-label={`${a.name} how long`}>
+                      <option value="30">For 30 minutes</option>
                       <option value="60">For 1 hour</option>
                       <option value="120">For 2 hours</option>
+                      <option value="time">Until a set time…</option>
                       <option value="eod">Rest of today</option>
                       <option value="none">Until I change it</option>
                     </select>
+                  )}
+                  {mode !== "auto" && p.duration === "time" && (
+                    <input type="time" value={p.time || ""} onChange={(e) => setPicks({ ...picks, [key]: { ...p, time: e.target.value } })}
+                      style={selectStyle} aria-label={`${a.name} until what time (Eastern)`} title="Eastern time. If that time has already passed today, it means tomorrow." />
                   )}
                   <button onClick={() => applyOverride(a)} disabled={saving === key || !info.kv} style={{ background: info.kv ? THEME.primary : THEME.border, color: "#fff", border: "none", borderRadius: 999, padding: "6px 14px", cursor: info.kv ? "pointer" : "not-allowed", fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 600 }}>
                     {saving === key ? "Saving…" : "Apply"}
