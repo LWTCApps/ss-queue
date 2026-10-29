@@ -58,7 +58,7 @@ const PROGRAM_DEFS = [
   "Marine Service Technologies",
   "Master Automotive Service Technology 1",
   "Medical Assisting",
-  "Nursing Assistant (Articulated)",
+  "Nursing Assistant",
   "Patient Care Technician",
   "Pharmacy Technician",
   "Phlebotomy",
